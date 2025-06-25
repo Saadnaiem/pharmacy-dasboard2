@@ -1,6 +1,6 @@
 # Multi-stage Dockerfile for Pharmacy Dashboard
 # Stage 1: Build React frontend
-FROM node:20-slim AS frontend-build
+FROM node:20.18.0-alpine3.20 AS frontend-build
 
 WORKDIR /app/client
 COPY client/package*.json ./
@@ -9,20 +9,20 @@ RUN npm ci --only=production --silent
 COPY client/ ./
 RUN npm run build
 
-# Stage 2: Python backend with static files
-FROM python:3.12-slim AS production
+# Stage 2: Python backend with static files  
+FROM python:3.12.8-alpine3.20 AS production
 
 # Set working directory
 WORKDIR /app
 
 # Install system dependencies and security updates
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk update && apk add --no-cache \
     gcc \
-    libc6-dev \
+    musl-dev \
+    linux-headers \
     curl \
-    && apt-get upgrade -y \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && apk upgrade \
+    && rm -rf /var/cache/apk/*
 
 # Copy Python requirements and install dependencies
 COPY requirements.txt .
