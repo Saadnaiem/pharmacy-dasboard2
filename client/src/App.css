@@ -405,6 +405,26 @@ body {
   opacity: 0.9;
 }
 
+/* Average Daily Revenue Card Specific Styling */
+.avg-daily-revenue::before {
+  background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+}
+
+.avg-daily-revenue:hover {
+  border-color: rgba(67, 233, 123, 0.3);
+}
+
+.avg-daily-revenue .metric-value {
+  background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.avg-daily-revenue .metric-icon {
+  color: #43e97b;
+}
+
 /* Reference Dashboard Charts Layout */
 .charts-grid {
   display: grid;

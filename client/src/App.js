@@ -187,10 +187,16 @@ function App() {  const [salesData, setSalesData] = useState([]);
         item.NetRevenueAmount !== null && 
         !isNaN(Number(item.NetRevenueAmount)) &&
         (locationFilters.includes('all') || locationFilters.includes(item.LOCATIONNAME))
-      );yearComparison.year2024 = {
+      );      yearComparison.year2024 = {
         totalRevenue: data2024.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0),
         totalTransactions: data2024.length,
         averageOrderValue: data2024.length > 0 ? data2024.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0) / data2024.length : 0,
+        uniqueDays: new Set(data2024.map(item => new Date(item.Date).toDateString())).size,
+        averageDailyRevenue: (() => {
+          const revenue = data2024.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0);
+          const days = new Set(data2024.map(item => new Date(item.Date).toDateString())).size;
+          return days > 0 ? revenue / days : 0;
+        })(),
         paymentMethods: data2024.reduce((acc, item) => {
           acc.cash += Number(item.CASHREVENUE || 0);
           acc.credit += Number(item.CREDITREVENUE || 0);
@@ -205,6 +211,12 @@ function App() {  const [salesData, setSalesData] = useState([]);
         totalRevenue: data2025.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0),
         totalTransactions: data2025.length,
         averageOrderValue: data2025.length > 0 ? data2025.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0) / data2025.length : 0,
+        uniqueDays: new Set(data2025.map(item => new Date(item.Date).toDateString())).size,
+        averageDailyRevenue: (() => {
+          const revenue = data2025.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0);
+          const days = new Set(data2025.map(item => new Date(item.Date).toDateString())).size;
+          return days > 0 ? revenue / days : 0;
+        })(),
         paymentMethods: data2025.reduce((acc, item) => {
           acc.cash += Number(item.CASHREVENUE || 0);
           acc.credit += Number(item.CREDITREVENUE || 0);
@@ -239,12 +251,21 @@ function App() {  const [salesData, setSalesData] = useState([]);
       }).sort((a, b) => (b.revenue2024 + b.revenue2025) - (a.revenue2024 + a.revenue2025));
     }
 
-    const validData = filteredData;
-
-    // Total metrics
+    const validData = filteredData;    // Total metrics
     const totalRevenue = validData.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0);
     const totalTransactions = validData.length;
     const averageOrderValue = totalRevenue / totalTransactions;
+    
+    // Calculate unique days for average daily revenue
+    const uniqueDays = new Set(
+      validData.map(item => {
+        // Create a date string from the item's date
+        const date = new Date(item.Date);
+        return date.toDateString(); // This will give us unique days
+      })
+    ).size;
+    
+    const averageDailyRevenue = uniqueDays > 0 ? totalRevenue / uniqueDays : 0;
 
     // Top Pharmacists
     const pharmacistStats = validData.reduce((acc, item) => {
@@ -349,12 +370,12 @@ function App() {  const [salesData, setSalesData] = useState([]);
       validData
         .map(item => item.PharmacistName || item.Pharmacist || item.PHARMACISTNAME || 'Unknown')
         .filter(pharmacist => pharmacist && pharmacist !== 'Unknown')
-    ).size;
-
-    return {
+    ).size;    return {
       totalRevenue,
       totalTransactions,
       averageOrderValue,
+      averageDailyRevenue,
+      uniqueDays,
       activePharmacists,
       topPharmacists,
       monthlyTrends,
@@ -655,6 +676,22 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 </div>
               </div>
 
+              <div className="metric-card avg-daily-revenue">
+                <div className="metric-header">
+                  <h3>Average Daily Revenue</h3>
+                  <div className="metric-icon">📅</div>
+                </div>
+                <div className="metric-value">
+                  2024: {formatCurrency(metrics.yearComparison.year2024.averageDailyRevenue)}
+                </div>
+                <div className="metric-value">
+                  2025: {formatCurrency(metrics.yearComparison.year2025.averageDailyRevenue)}
+                </div>
+                <div className="metric-change positive">
+                  {metrics.yearComparison.year2024.uniqueDays} vs {metrics.yearComparison.year2025.uniqueDays} days
+                </div>
+              </div>
+
               <div className="metric-card active-pharmacists">
                 <div className="metric-header">
                   <h3>Year Comparison</h3>
@@ -701,9 +738,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 <div className="metric-change positive">
                   {getFilterSummary()}
                 </div>
-              </div>
-
-              <div className="metric-card avg-order">
+              </div>              <div className="metric-card avg-order">
                 <div className="metric-header">
                   <h3>Average Order Value</h3>
                   <div className="metric-icon">💳</div>
@@ -714,7 +749,20 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 <div className="metric-change positive">
                   {getFilterSummary()}
                 </div>
-              </div>              <div className="metric-card active-pharmacists">
+              </div>
+
+              <div className="metric-card avg-daily-revenue">
+                <div className="metric-header">
+                  <h3>Average Daily Revenue</h3>
+                  <div className="metric-icon">📅</div>
+                </div>
+                <div className="metric-value">
+                  {formatCurrency(metrics.averageDailyRevenue)}
+                </div>
+                <div className="metric-change positive">
+                  {metrics.uniqueDays} active days
+                </div>
+              </div><div className="metric-card active-pharmacists">
                 <div className="metric-header">
                   <h3>Active Pharmacists</h3>
                   <div className="metric-icon">👨‍⚕️</div>
