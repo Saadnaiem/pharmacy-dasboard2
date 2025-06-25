@@ -465,6 +465,26 @@ body {
   color: #4facfe;
 }
 
+/* Returns Summary Card Specific Styling */
+.returns-summary::before {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.returns-summary:hover {
+  border-color: rgba(102, 126, 234, 0.3);
+}
+
+.returns-summary .metric-value {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.returns-summary .metric-icon {
+  color: #667eea;
+}
+
 /* Reference Dashboard Charts Layout */
 .charts-grid {
   display: grid;

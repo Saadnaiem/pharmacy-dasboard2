@@ -249,12 +249,40 @@ function App() {  const [salesData, setSalesData] = useState([]);
           growthRate
         };
       }).sort((a, b) => (b.revenue2024 + b.revenue2025) - (a.revenue2024 + a.revenue2025));
-    }
+    }    const validData = filteredData;
 
-    const validData = filteredData;    // Total metrics
-    const totalRevenue = validData.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0);
-    const totalTransactions = validData.length;
-    const averageOrderValue = totalRevenue / totalTransactions;
+    // Total metrics with returns handling
+    const revenueMetrics = validData.reduce((acc, item) => {
+      const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
+      const amount = Number(item.NetRevenueAmount);
+      const isReturn = invoiceNumber.includes('-R');
+      
+      if (isReturn) {
+        // Return transaction - subtract from total revenue
+        acc.totalRevenue -= amount;
+        acc.totalReturns += amount;
+        acc.returnTransactions += 1;
+      } else {
+        // Regular sale transaction - add to total revenue
+        acc.totalRevenue += amount;
+        acc.grossSales += amount;
+        acc.salesTransactions += 1;
+      }
+      
+      acc.totalTransactions += 1;
+      return acc;
+    }, {
+      totalRevenue: 0,
+      grossSales: 0,
+      totalReturns: 0,
+      totalTransactions: 0,
+      salesTransactions: 0,
+      returnTransactions: 0
+    });
+
+    const totalRevenue = revenueMetrics.totalRevenue;
+    const totalTransactions = revenueMetrics.totalTransactions;
+    const averageOrderValue = revenueMetrics.salesTransactions > 0 ? revenueMetrics.grossSales / revenueMetrics.salesTransactions : 0;
     
     // Calculate unique days for average daily revenue
     const uniqueDays = new Set(
@@ -368,9 +396,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
       validData
         .map(item => item.PharmacistName || item.Pharmacist || item.PHARMACISTNAME || 'Unknown')
         .filter(pharmacist => pharmacist && pharmacist !== 'Unknown')
-    ).size;
-
-    // Calculate daily aggregations for top day metrics
+    ).size;    // Calculate daily aggregations for top day metrics (with returns handling)
     const dailyStats = validData.reduce((acc, item) => {
       const date = new Date(item.Date);
       const dateKey = date.toDateString();
@@ -385,11 +411,31 @@ function App() {  const [salesData, setSalesData] = useState([]);
             day: 'numeric' 
           }), // "Jan 1, 2024"
           revenue: 0,
-          transactions: 0
+          grossSales: 0,
+          returns: 0,
+          transactions: 0,
+          salesTransactions: 0,
+          returnTransactions: 0
         };
       }
       
-      acc[dateKey].revenue += Number(item.NetRevenueAmount);
+      const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
+      const amount = Number(item.NetRevenueAmount);
+      const isReturn = invoiceNumber.includes('-R');
+      
+      if (isReturn) {
+        // Return transaction - subtract from revenue and count separately
+        acc[dateKey].revenue -= amount;
+        acc[dateKey].returns += amount;
+        acc[dateKey].returnTransactions += 1;
+      } else {
+        // Regular sale transaction - add to revenue
+        acc[dateKey].revenue += amount;
+        acc[dateKey].grossSales += amount;
+        acc[dateKey].salesTransactions += 1;
+      }
+      
+      // Count all transactions (sales + returns)
       acc[dateKey].transactions += 1;
       
       return acc;
@@ -420,6 +466,12 @@ function App() {  const [salesData, setSalesData] = useState([]);
       yearComparison,
       topDaySales,
       topDayTransactions,
+      // Returns metrics
+      grossSales: revenueMetrics.grossSales,
+      totalReturns: revenueMetrics.totalReturns,
+      salesTransactions: revenueMetrics.salesTransactions,
+      returnTransactions: revenueMetrics.returnTransactions,
+      netSalesRate: revenueMetrics.grossSales > 0 ? (revenueMetrics.totalRevenue / revenueMetrics.grossSales * 100) : 100,
     };
   };
 
@@ -810,9 +862,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 <div className="metric-change positive">
                   {metrics.topDaySales.dayName}, {metrics.topDaySales.dateFormatted}
                 </div>
-              </div>
-
-              <div className="metric-card top-day-transactions">
+              </div>              <div className="metric-card top-day-transactions">
                 <div className="metric-header">
                   <h3>Top Day Transactions</h3>
                   <div className="metric-icon">📊</div>
@@ -822,6 +872,19 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 </div>
                 <div className="metric-change positive">
                   {metrics.topDayTransactions.dayName}, {metrics.topDayTransactions.dateFormatted}
+                </div>
+              </div>
+
+              <div className="metric-card returns-summary">
+                <div className="metric-header">
+                  <h3>Returns Summary</h3>
+                  <div className="metric-icon">↩️</div>
+                </div>
+                <div className="metric-value">
+                  {formatCurrency(metrics.totalReturns)}
+                </div>
+                <div className="metric-change neutral">
+                  {metrics.returnTransactions} returns ({((metrics.totalReturns / (metrics.grossSales || 1)) * 100).toFixed(1)}%)
                 </div>
               </div>
 
