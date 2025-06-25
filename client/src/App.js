@@ -363,14 +363,49 @@ function App() {  const [salesData, setSalesData] = useState([]);
       acc.cash += Number(item.CASHREVENUE || 0);
       acc.credit += Number(item.CREDITREVENUE || 0);
       return acc;
-    }, { cash: 0, credit: 0 });
-
-    // Active Pharmacists Count - unique pharmacists in the filtered period
+    }, { cash: 0, credit: 0 });    // Active Pharmacists Count - unique pharmacists in the filtered period
     const activePharmacists = new Set(
       validData
         .map(item => item.PharmacistName || item.Pharmacist || item.PHARMACISTNAME || 'Unknown')
         .filter(pharmacist => pharmacist && pharmacist !== 'Unknown')
-    ).size;    return {
+    ).size;
+
+    // Calculate daily aggregations for top day metrics
+    const dailyStats = validData.reduce((acc, item) => {
+      const date = new Date(item.Date);
+      const dateKey = date.toDateString();
+      
+      if (!acc[dateKey]) {
+        acc[dateKey] = {
+          dateString: dateKey,
+          dayName: date.toLocaleDateString('en-US', { weekday: 'long' }), // "Monday"
+          dateFormatted: date.toLocaleDateString('en-US', { 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+          }), // "Jan 1, 2024"
+          revenue: 0,
+          transactions: 0
+        };
+      }
+      
+      acc[dateKey].revenue += Number(item.NetRevenueAmount);
+      acc[dateKey].transactions += 1;
+      
+      return acc;
+    }, {});
+
+    // Find top day by sales (revenue)
+    const topDaySales = Object.values(dailyStats).reduce((max, day) => 
+      day.revenue > max.revenue ? day : max,
+      { revenue: 0, dayName: 'N/A', dateFormatted: 'N/A' }
+    );
+
+    // Find top day by transactions
+    const topDayTransactions = Object.values(dailyStats).reduce((max, day) => 
+      day.transactions > max.transactions ? day : max,
+      { transactions: 0, dayName: 'N/A', dateFormatted: 'N/A' }
+    );    return {
       totalRevenue,
       totalTransactions,
       averageOrderValue,
@@ -383,6 +418,8 @@ function App() {  const [salesData, setSalesData] = useState([]);
       revenueByLocation,
       paymentMethods,
       yearComparison,
+      topDaySales,
+      topDayTransactions,
     };
   };
 
@@ -749,9 +786,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 <div className="metric-change positive">
                   {getFilterSummary()}
                 </div>
-              </div>
-
-              <div className="metric-card avg-daily-revenue">
+              </div>              <div className="metric-card avg-daily-revenue">
                 <div className="metric-header">
                   <h3>Average Daily Revenue</h3>
                   <div className="metric-icon">📅</div>
@@ -762,7 +797,35 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 <div className="metric-change positive">
                   {metrics.uniqueDays} active days
                 </div>
-              </div><div className="metric-card active-pharmacists">
+              </div>
+
+              <div className="metric-card top-day-sales">
+                <div className="metric-header">
+                  <h3>Top Day Sales</h3>
+                  <div className="metric-icon">📈</div>
+                </div>
+                <div className="metric-value">
+                  {formatCurrency(metrics.topDaySales.revenue)}
+                </div>
+                <div className="metric-change positive">
+                  {metrics.topDaySales.dayName}, {metrics.topDaySales.dateFormatted}
+                </div>
+              </div>
+
+              <div className="metric-card top-day-transactions">
+                <div className="metric-header">
+                  <h3>Top Day Transactions</h3>
+                  <div className="metric-icon">📊</div>
+                </div>
+                <div className="metric-value">
+                  {formatNumber(metrics.topDayTransactions.transactions)}
+                </div>
+                <div className="metric-change positive">
+                  {metrics.topDayTransactions.dayName}, {metrics.topDayTransactions.dateFormatted}
+                </div>
+              </div>
+
+              <div className="metric-card active-pharmacists">
                 <div className="metric-header">
                   <h3>Active Pharmacists</h3>
                   <div className="metric-icon">👨‍⚕️</div>

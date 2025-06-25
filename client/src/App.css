@@ -425,6 +425,46 @@ body {
   color: #43e97b;
 }
 
+/* Top Day Sales Card Specific Styling */
+.top-day-sales::before {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.top-day-sales:hover {
+  border-color: rgba(240, 147, 251, 0.3);
+}
+
+.top-day-sales .metric-value {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.top-day-sales .metric-icon {
+  color: #f093fb;
+}
+
+/* Top Day Transactions Card Specific Styling */
+.top-day-transactions::before {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+}
+
+.top-day-transactions:hover {
+  border-color: rgba(79, 172, 254, 0.3);
+}
+
+.top-day-transactions .metric-value {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.top-day-transactions .metric-icon {
+  color: #4facfe;
+}
+
 /* Reference Dashboard Charts Layout */
 .charts-grid {
   display: grid;
