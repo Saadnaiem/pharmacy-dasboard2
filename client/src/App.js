@@ -187,13 +187,84 @@ function App() {  const [salesData, setSalesData] = useState([]);
         item.NetRevenueAmount !== null && 
         !isNaN(Number(item.NetRevenueAmount)) &&
         (locationFilters.includes('all') || locationFilters.includes(item.LOCATIONNAME))
-      );      yearComparison.year2024 = {
-        totalRevenue: data2024.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0),
+      );
+
+      // Helper function to calculate top days with returns handling
+      const calculateTopDays = (data) => {
+        const dailyStats = data.reduce((acc, item) => {
+          const date = new Date(item.Date);
+          const dateKey = date.toDateString();
+          
+          if (!acc[dateKey]) {
+            acc[dateKey] = {
+              dateString: dateKey,
+              dayName: date.toLocaleDateString('en-US', { weekday: 'long' }),
+              dateFormatted: date.toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+              }),
+              revenue: 0,
+              grossSales: 0,
+              returns: 0,
+              transactions: 0,
+              salesTransactions: 0,
+              returnTransactions: 0
+            };
+          }
+          
+          const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
+          const amount = Number(item.NetRevenueAmount);
+          const isReturn = invoiceNumber.includes('-R');
+          
+          if (isReturn) {
+            acc[dateKey].revenue -= amount;
+            acc[dateKey].returns += amount;
+            acc[dateKey].returnTransactions += 1;
+          } else {
+            acc[dateKey].revenue += amount;
+            acc[dateKey].grossSales += amount;
+            acc[dateKey].salesTransactions += 1;
+          }
+          
+          acc[dateKey].transactions += 1;
+          return acc;
+        }, {});
+
+        const topDaySales = Object.values(dailyStats).reduce((max, day) => 
+          day.revenue > max.revenue ? day : max,
+          { revenue: 0, dayName: 'N/A', dateFormatted: 'N/A' }
+        );
+
+        const topDayTransactions = Object.values(dailyStats).reduce((max, day) => 
+          day.transactions > max.transactions ? day : max,
+          { transactions: 0, dayName: 'N/A', dateFormatted: 'N/A' }
+        );
+
+        return { topDaySales, topDayTransactions };
+      };
+
+      // Calculate top days for 2024
+      const topDays2024 = calculateTopDays(data2024);
+      
+      // Calculate top days for 2025
+      const topDays2025 = calculateTopDays(data2025);      yearComparison.year2024 = {
+        totalRevenue: data2024.reduce((sum, item) => {
+          const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
+          const amount = Number(item.NetRevenueAmount);
+          const isReturn = invoiceNumber.includes('-R');
+          return sum + (isReturn ? -amount : amount);
+        }, 0),
         totalTransactions: data2024.length,
         averageOrderValue: data2024.length > 0 ? data2024.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0) / data2024.length : 0,
         uniqueDays: new Set(data2024.map(item => new Date(item.Date).toDateString())).size,
         averageDailyRevenue: (() => {
-          const revenue = data2024.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0);
+          const revenue = data2024.reduce((sum, item) => {
+            const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
+            const amount = Number(item.NetRevenueAmount);
+            const isReturn = invoiceNumber.includes('-R');
+            return sum + (isReturn ? -amount : amount);
+          }, 0);
           const days = new Set(data2024.map(item => new Date(item.Date).toDateString())).size;
           return days > 0 ? revenue / days : 0;
         })(),
@@ -206,14 +277,26 @@ function App() {  const [salesData, setSalesData] = useState([]);
           const pharmacist = item.Pharmacist || 'Unknown';
           acc[pharmacist] = (acc[pharmacist] || 0) + Number(item.NetRevenueAmount);
           return acc;
-        }, {})
+        }, {}),
+        topDaySales: topDays2024.topDaySales,
+        topDayTransactions: topDays2024.topDayTransactions
       };      yearComparison.year2025 = {
-        totalRevenue: data2025.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0),
+        totalRevenue: data2025.reduce((sum, item) => {
+          const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
+          const amount = Number(item.NetRevenueAmount);
+          const isReturn = invoiceNumber.includes('-R');
+          return sum + (isReturn ? -amount : amount);
+        }, 0),
         totalTransactions: data2025.length,
         averageOrderValue: data2025.length > 0 ? data2025.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0) / data2025.length : 0,
         uniqueDays: new Set(data2025.map(item => new Date(item.Date).toDateString())).size,
         averageDailyRevenue: (() => {
-          const revenue = data2025.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0);
+          const revenue = data2025.reduce((sum, item) => {
+            const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
+            const amount = Number(item.NetRevenueAmount);
+            const isReturn = invoiceNumber.includes('-R');
+            return sum + (isReturn ? -amount : amount);
+          }, 0);
           const days = new Set(data2025.map(item => new Date(item.Date).toDateString())).size;
           return days > 0 ? revenue / days : 0;
         })(),
@@ -226,7 +309,9 @@ function App() {  const [salesData, setSalesData] = useState([]);
           const pharmacist = item.Pharmacist || 'Unknown';
           acc[pharmacist] = (acc[pharmacist] || 0) + Number(item.NetRevenueAmount);
           return acc;
-        }, {})
+        }, {}),
+        topDaySales: topDays2025.topDaySales,
+        topDayTransactions: topDays2025.topDayTransactions
       };
 
       // Create pharmacist comparison for year-over-year analysis
@@ -775,9 +860,40 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 </div>
                 <div className="metric-value">
                   2025: {formatCurrency(metrics.yearComparison.year2025.averageDailyRevenue)}
+                </div>                <div className="metric-change positive">
+                  {metrics.yearComparison.year2024.uniqueDays} vs {metrics.yearComparison.year2025.uniqueDays} days
+                </div>
+              </div>
+
+              <div className="metric-card top-day-sales">
+                <div className="metric-header">
+                  <h3>Top Day Sales</h3>
+                  <div className="metric-icon">📈</div>
+                </div>
+                <div className="metric-value">
+                  2024: {formatCurrency(metrics.yearComparison.year2024.topDaySales.revenue)}
+                </div>
+                <div className="metric-value">
+                  2025: {formatCurrency(metrics.yearComparison.year2025.topDaySales.revenue)}
                 </div>
                 <div className="metric-change positive">
-                  {metrics.yearComparison.year2024.uniqueDays} vs {metrics.yearComparison.year2025.uniqueDays} days
+                  {metrics.yearComparison.year2024.topDaySales.dateFormatted} vs {metrics.yearComparison.year2025.topDaySales.dateFormatted}
+                </div>
+              </div>
+
+              <div className="metric-card top-day-transactions">
+                <div className="metric-header">
+                  <h3>Top Day Transactions</h3>
+                  <div className="metric-icon">📊</div>
+                </div>
+                <div className="metric-value">
+                  2024: {formatNumber(metrics.yearComparison.year2024.topDayTransactions.transactions)}
+                </div>
+                <div className="metric-value">
+                  2025: {formatNumber(metrics.yearComparison.year2025.topDayTransactions.transactions)}
+                </div>
+                <div className="metric-change positive">
+                  {metrics.yearComparison.year2024.topDayTransactions.dateFormatted} vs {metrics.yearComparison.year2025.topDayTransactions.dateFormatted}
                 </div>
               </div>
 
