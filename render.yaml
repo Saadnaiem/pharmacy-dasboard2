@@ -2,21 +2,27 @@
 # This file enables one-click deployment to Render
 
 services:
-  # Backend API Service
+  # Full-stack Web Service (Frontend + Backend)
   - type: web
-    name: pharmacy-dashboard-api
+    name: pharmacy-dashboard
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      # Install Python dependencies
+      pip install -r requirements.txt
+      # Install Node.js and build frontend
+      curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+      sudo apt-get install -y nodejs
+      cd client && npm ci && npm run build && cd ..
     startCommand: python app.py
     healthCheckPath: /api/health
     envVars:
       - key: FLASK_ENV
         value: production
       - key: PORT
-        value: 5000
+        generateValue: true  # Let Render assign the port
       - key: GOOGLE_DRIVE_CSV_URL
-        sync: false  # Set this manually in Render dashboard
+        sync: false  # Set this manually in Render dashboard if using Google Drive
 
   # Frontend Static Site
   - type: web
