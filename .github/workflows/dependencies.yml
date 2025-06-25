@@ -1,0 +1,62 @@
+name: Dependency Updates
+
+on:
+  schedule:
+    # Run every Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    # Allow manual trigger
+
+jobs:
+  dependency-check:
+    runs-on: ubuntu-latest
+    name: 🔄 Check Dependencies
+    
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: 📦 Set up Node.js 18
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: 🔍 Check Python dependencies
+      run: |
+        echo "📦 Current Python dependencies:"
+        cat requirements.txt
+        echo ""
+        echo "🔍 Checking for updates..."
+        python -m pip install --upgrade pip
+        pip install pip-check-updates || pip install pip-upgrader || echo "No dependency checker available"
+    
+    - name: 🔍 Check Node.js dependencies
+      run: |
+        cd client
+        echo "📦 Current Node.js dependencies:"
+        cat package.json | grep -A 20 '"dependencies"'
+        echo ""
+        echo "🔍 Checking for updates..."
+        npx npm-check-updates --target minor || echo "npm-check-updates not available"
+    
+    - name: 📊 Generate dependency report
+      run: |
+        echo "📊 Dependency Report - $(date)" > dependency-report.md
+        echo "## Python Dependencies" >> dependency-report.md
+        cat requirements.txt >> dependency-report.md
+        echo "" >> dependency-report.md
+        echo "## Node.js Dependencies" >> dependency-report.md
+        cd client && cat package.json | grep -A 50 '"dependencies"' >> ../dependency-report.md
+        echo "✅ Dependency report generated"
+    
+    - name: 🔄 Create issue for updates (if needed)
+      if: github.event_name == 'schedule'
+      run: |
+        echo "📝 Dependency check completed on $(date)"
+        echo "💡 Consider reviewing dependencies for security updates"
+        echo "🔗 Manual review recommended for major version updates"

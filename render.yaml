@@ -1,0 +1,41 @@
+# Render Blueprint for Pharmacy Dashboard
+# This file enables one-click deployment to Render
+
+services:
+  # Backend API Service
+  - type: web
+    name: pharmacy-dashboard-api
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    healthCheckPath: /api/health
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: GOOGLE_DRIVE_CSV_URL
+        sync: false  # Set this manually in Render dashboard
+
+  # Frontend Static Site
+  - type: web
+    name: pharmacy-dashboard-frontend
+    env: static
+    plan: free
+    buildCommand: cd client && npm install && npm run build
+    staticPublishPath: ./client/build
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: REACT_APP_API_URL
+        value: https://pharmacy-dashboard-api.onrender.com
+
+# Optional: Database (if you want to migrate from CSV to database later)
+# databases:
+#   - name: pharmacy-db
+#     plan: free
+#     databaseName: pharmacy_dashboard
+#     user: pharmacy_user

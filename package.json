@@ -1,0 +1,31 @@
+{
+  "name": "pharmacy-dashboard",
+  "version": "1.0.0",
+  "description": "Advanced Pharmacy Dashboard for Sales Analytics and Business Intelligence",  "scripts": {
+    "start:backend": "python app.py",
+    "start:frontend": "cd client && npm start",
+    "start:dev": "concurrently \"npm run start:backend\" \"npm run start:frontend\"",
+    "build": "cd client && npm run build",
+    "build:production": "cd client && npm install && npm run build",
+    "install:all": "pip install -r requirements.txt && cd client && npm install",
+    "test:backend": "python -c \"import app; print('Backend imports successfully')\"",
+    "test:build": "npm run build && test -f client/build/index.html",
+    "health:check": "curl -f http://localhost:5000/api/health || echo 'Server not running'",
+    "deploy:prepare": "npm run install:all && npm run test:backend && npm run build",
+    "clean": "rm -rf client/build client/node_modules node_modules"
+  },
+  "keywords": [
+    "pharmacy",
+    "dashboard",
+    "analytics",
+    "react",
+    "flask"
+  ],
+  "author": "Dr. Saad Naiem Ali",  "license": "PROPRIETARY",
+  "dependencies": {
+    "concurrently": "^9.2.0"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
+  }
+}
