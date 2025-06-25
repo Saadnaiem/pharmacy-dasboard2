@@ -9,9 +9,8 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)  # Enable CORS for all routes
 
 # Configuration for Google Drive CSV
-# You can set this as an environment variable or modify directly
-GOOGLE_DRIVE_CSV_URL = os.getenv('GOOGLE_DRIVE_CSV_URL', None)
-LOCAL_CSV_PATH = 'sales.csv'
+# You must set this as an environment variable in production
+GOOGLE_DRIVE_CSV_URL = os.getenv('GOOGLE_DRIVE_CSV_URL')
 
 def get_google_drive_download_url(share_url):
     """
@@ -41,40 +40,32 @@ def get_google_drive_download_url(share_url):
 
 def load_csv_data():
     """
-    Load CSV data from Google Drive or local file
-    Priority: Google Drive URL > Local file
+    Load CSV data from Google Drive
+    Requires GOOGLE_DRIVE_CSV_URL environment variable to be set
     """
-    print("Loading CSV data...")
+    print("Loading CSV data from Google Drive...")
     
-    # Try Google Drive first if URL is provided
-    if GOOGLE_DRIVE_CSV_URL:
-        try:
-            print(f"Attempting to load from Google Drive: {GOOGLE_DRIVE_CSV_URL}")
-            download_url = get_google_drive_download_url(GOOGLE_DRIVE_CSV_URL)
-            print(f"Download URL: {download_url}")
-            
-            # Download the file
-            response = requests.get(download_url, timeout=30)
-            response.raise_for_status()
-            
-            # Read CSV from the downloaded content
-            csv_content = io.StringIO(response.text)
-            df = pd.read_csv(csv_content)
-            print(f"✅ Successfully loaded {len(df)} rows from Google Drive")
-            return df
-            
-        except Exception as e:
-            print(f"❌ Failed to load from Google Drive: {str(e)}")
-            print("Falling back to local file...")
+    if not GOOGLE_DRIVE_CSV_URL:
+        raise ValueError("GOOGLE_DRIVE_CSV_URL environment variable is required but not set. Please configure it in your deployment environment.")
     
-    # Fallback to local file
-    if os.path.exists(LOCAL_CSV_PATH):
-        print(f"Loading from local file: {LOCAL_CSV_PATH}")
-        df = pd.read_csv(LOCAL_CSV_PATH)
-        print(f"✅ Successfully loaded {len(df)} rows from local file")
+    try:
+        print(f"Attempting to load from Google Drive: {GOOGLE_DRIVE_CSV_URL}")
+        download_url = get_google_drive_download_url(GOOGLE_DRIVE_CSV_URL)
+        print(f"Download URL: {download_url}")
+        
+        # Download the file
+        response = requests.get(download_url, timeout=30)
+        response.raise_for_status()
+        
+        # Read CSV from the downloaded content
+        csv_content = io.StringIO(response.text)
+        df = pd.read_csv(csv_content)
+        print(f"✅ Successfully loaded {len(df)} rows from Google Drive")
         return df
-    else:
-        raise FileNotFoundError(f"No data source available. Google Drive URL: {GOOGLE_DRIVE_CSV_URL}, Local file exists: {os.path.exists(LOCAL_CSV_PATH)}")
+        
+    except Exception as e:
+        print(f"❌ Failed to load from Google Drive: {str(e)}")
+        raise Exception(f"Failed to load data from Google Drive. Please check your GOOGLE_DRIVE_CSV_URL environment variable and ensure the file is publicly accessible. Error: {str(e)}")
 
 @app.route('/api/sales-data')
 def get_sales_data():
@@ -192,8 +183,8 @@ def get_google_drive_config():
     """Get current Google Drive URL configuration"""
     return jsonify({
         "google_drive_url": GOOGLE_DRIVE_CSV_URL,
-        "has_local_file": os.path.exists(LOCAL_CSV_PATH),
-        "data_source": "Google Drive" if GOOGLE_DRIVE_CSV_URL else ("Local File" if os.path.exists(LOCAL_CSV_PATH) else "None")
+        "data_source": "Google Drive" if GOOGLE_DRIVE_CSV_URL else "Not Configured",
+        "is_configured": bool(GOOGLE_DRIVE_CSV_URL)
     })
 
 @app.route('/api/config/google-drive-url', methods=['POST'])
@@ -224,7 +215,7 @@ def set_google_drive_config():
                 return jsonify({"error": f"Failed to load data from new URL: {str(e)}"}), 400
         else:
             GOOGLE_DRIVE_CSV_URL = None
-            return jsonify({"success": True, "message": "Google Drive URL cleared. Will use local file."})
+            return jsonify({"success": True, "message": "Google Drive URL cleared. No data source configured."})
             
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -281,7 +272,7 @@ def serve_react_assets(path):
 if __name__ == '__main__':
     print("Starting Flask server...")
     print(f"Current working directory: {os.getcwd()}")
-    print(f"Sales.csv exists: {os.path.exists('sales.csv')}")
+    print(f"Google Drive CSV URL configured: {'Yes' if GOOGLE_DRIVE_CSV_URL else 'No'}")
     
     # Production vs Development configuration
     is_production = os.getenv('FLASK_ENV') == 'production'
