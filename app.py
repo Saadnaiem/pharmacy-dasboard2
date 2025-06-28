@@ -281,6 +281,185 @@ def verify_totals():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/sales-data-meta')
+def get_sales_data_meta():
+    """Get metadata about the sales data (counts, available years, etc.) for faster loading"""
+    try:
+        print("Getting sales data metadata...")
+        
+        # Load raw CSV without heavy processing for faster metadata
+        if GOOGLE_DRIVE_CSV_URL:
+            try:
+                download_url = get_google_drive_download_url(GOOGLE_DRIVE_CSV_URL)
+                response = requests.get(download_url, timeout=30)
+                response.raise_for_status()
+                csv_content = io.StringIO(response.text)
+                df = pd.read_csv(csv_content)
+            except Exception as e:
+                print(f"Failed to load from Google Drive: {e}")
+                df = pd.read_csv(os.path.join(os.path.dirname(__file__), 'sales.csv'))
+        else:
+            df = pd.read_csv(os.path.join(os.path.dirname(__file__), 'sales.csv'))
+        
+        print(f"Raw CSV loaded: {len(df)} rows")
+        
+        # Quick processing for metadata only
+        total_rows = len(df)
+        
+        # Sample first 10,000 rows for quick metadata extraction
+        sample_df = df.head(10000).copy()
+        
+        # Quick date processing for sample
+        sample_df['Date'] = pd.to_datetime(sample_df['INVOICEDATE'], format='%d/%m/%Y', errors='coerce')
+        sample_df.dropna(subset=['Date'], inplace=True)
+        sample_df['Year'] = sample_df['Date'].dt.year
+        
+        # Get available years from sample
+        available_years = sorted(sample_df['Year'].unique().tolist(), reverse=True)
+          # Get unique locations from sample (filter out NaN values)
+        unique_locations = df['LOCATIONNAME'].dropna().drop_duplicates().head(50).tolist()
+        
+        # Quick stats from sample
+        sample_revenue = sample_df['NETREVENUEAMOUNT'].sum() if 'NETREVENUEAMOUNT' in sample_df.columns else 0
+        return_transactions = sample_df[sample_df['INVOICENUMBER'].str.contains('-R', na=False)] if 'INVOICENUMBER' in sample_df.columns else []
+        
+        metadata = {
+            'total_rows': total_rows,
+            'date_range': {
+                'min': sample_df['Date'].min().strftime('%Y-%m-%d') if not sample_df['Date'].empty else None,
+                'max': sample_df['Date'].max().strftime('%Y-%m-%d') if not sample_df['Date'].empty else None
+            },
+            'available_years': available_years,
+            'sample_locations': unique_locations,
+            'total_revenue': float(sample_revenue),
+            'total_returns': len(return_transactions),
+            'data_source': 'Google Drive' if GOOGLE_DRIVE_CSV_URL else 'Local CSV',
+            'note': 'Metadata calculated from sample data for performance'
+        }
+        
+        print(f"Fast metadata generated: {total_rows} rows, {len(available_years)} years, {len(unique_locations)} locations")
+        return jsonify(metadata)
+        
+    except Exception as e:
+        print(f"ERROR in get_sales_data_meta: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/sales-data-filtered')
+def get_filtered_sales_data():
+    """Get filtered sales data based on query parameters for better performance"""
+    try:
+        # Get filter parameters
+        years = request.args.getlist('years')
+        months = request.args.getlist('months')
+        locations = request.args.getlist('locations')
+        limit = request.args.get('limit', 10000, type=int)  # Default limit to prevent overload
+        offset = request.args.get('offset', 0, type=int)
+        
+        print(f"Filtering data: years={years}, months={months}, locations={locations[:3] if len(locations) > 3 else locations}, limit={limit}")
+        print(f"Request args: {dict(request.args)}")
+        
+        if not years and not months and not locations:
+            print("No filters provided, returning empty result")
+            return jsonify({
+                'data': [],
+                'metadata': {
+                    'total_filtered': 0,
+                    'returned_count': 0,
+                    'offset': 0,
+                    'limit': limit,
+                    'has_more': False
+                }
+            })
+        
+        df = load_csv_data()
+        
+        # Process data similar to main endpoint
+        print("Processing dates for filtering...")
+        df['Date'] = pd.to_datetime(df['INVOICEDATE'], format='%d/%m/%Y', errors='coerce')
+        df.dropna(subset=['Date'], inplace=True)
+        
+        # Add Year and Month columns
+        df['Year'] = df['Date'].dt.year
+        df['Month'] = df['Date'].dt.month
+        
+        # Apply return logic
+        df['NetRevenueAmount'] = df.apply(
+            lambda row: -row['NETREVENUEAMOUNT'] if '-R' in str(row['INVOICENUMBER']) else row['NETREVENUEAMOUNT'], 
+            axis=1
+        )
+        
+        # Apply filters
+        if years:
+            df = df[df['Year'].isin([int(y) for y in years])]
+        
+        if months:
+            df = df[df['Month'].isin([int(m) for m in months])]
+        
+        if locations:
+            df = df[df['LOCATIONNAME'].isin(locations)]
+        
+        # Apply pagination
+        total_filtered = len(df)
+        df = df.iloc[offset:offset + limit]
+        
+        result = {
+            'data': df.to_dict('records'),
+            'metadata': {
+                'total_filtered': total_filtered,                'returned_count': len(df),
+                'offset': offset,
+                'limit': limit,
+                'has_more': offset + limit < total_filtered
+            }
+        }
+        
+        print(f"Filtered data: {total_filtered} total, returning {len(df)} rows")
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"ERROR in get_filtered_sales_data: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/test-data')
+def test_data():
+    """Simple test endpoint that returns sample data"""
+    try:
+        # Return hardcoded sample data for testing
+        sample_data = [
+            {
+                'INVOICENUMBER': 'INV001',
+                'INVOICEDATE': '01/01/2024',
+                'Date': '2024-01-01',
+                'NETREVENUEAMOUNT': 150.50,
+                'NetRevenueAmount': 150.50,
+                'LOCATIONNAME': 'Narjis Pharmacy',
+                'PHARMACISTNAME': 'Dr. Ahmed'
+            },
+            {
+                'INVOICENUMBER': 'INV002', 
+                'INVOICEDATE': '01/01/2024',
+                'Date': '2024-01-01',
+                'NETREVENUEAMOUNT': 75.25,
+                'NetRevenueAmount': 75.25,
+                'LOCATIONNAME': 'Albustan pharmacy',
+                'PHARMACISTNAME': 'Dr. Sara'
+            }
+        ]
+        
+        result = {
+            'data': sample_data,
+            'metadata': {
+                'total_filtered': len(sample_data),
+                'returned_count': len(sample_data),
+                'offset': 0,
+                'limit': 100,
+                'has_more': False
+            }
+        }
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # Serve React App in production
 @app.route('/')
 def serve_react_app():
