@@ -1032,7 +1032,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 </div>
               </div>              <div className="metric-card avg-order">
                 <div className="metric-header">
-                  <h3>Average Order Value</h3>
+                  <h3>Average Transaction Value</h3>
                   <div className="metric-icon">💳</div>
                 </div>
                 <div className="metric-value metric-value-2024 currency-value">
@@ -1114,7 +1114,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
 
               <div className="metric-card active-pharmacists">
                 <div className="metric-header">
-                  <h3>Active Pharmacists</h3>
+                  <h3>Total Pharmacists</h3>
                   <div className="metric-icon">👨‍⚕️</div>
                 </div>
                 <div className="metric-value metric-value-2024">
@@ -1218,7 +1218,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
               {/* 7. Average Order Value */}
               <div className="metric-card avg-order">
                 <div className="metric-header">
-                  <h3>Average Order Value</h3>
+                  <h3>Average Transaction Value</h3>
                   <div className="metric-icon">💳</div>
                 </div>
                 <div className="metric-value currency-value">
@@ -1246,7 +1246,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
               {/* 9. Active Pharmacists */}
               <div className="metric-card active-pharmacists">
                 <div className="metric-header">
-                  <h3>Active Pharmacists</h3>
+                  <h3>Total Pharmacists</h3>
                   <div className="metric-icon">👨‍⚕️</div>
                 </div>
                 <div className="metric-value">
@@ -1264,7 +1264,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
         <div className="charts-grid">
           {/* Monthly Revenue Trend */}
           <div className="chart-card half-width">
-            <h3>{getChartTitle()}</h3>
+            <h3><span role="img" aria-label="Revenue">💰</span> {getChartTitle()}</h3>
             <Line
               data={{
                 labels: metrics.monthlyComparison.months,
@@ -1408,7 +1408,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
 
           {/* Monthly Transaction Trend */}
           <div className="chart-card half-width">
-            <h3>{getTransactionChartTitle()}</h3>
+            <h3><span role="img" aria-label="Transactions">🔄</span> {getTransactionChartTitle()}</h3>
             <Line
               data={{
                 labels: metrics.monthlyComparison.months,
@@ -1556,7 +1556,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
             <Bar
               data={{                labels: shouldShowYearComparison() ? 
                   (metrics.yearComparison.pharmacistComparison || []).slice(0, 10).map((p, index) => 
-                    `${index + 1}. ${p.name || 'Unknown'}`
+                    `${index + 1}. ${(p.name || 'Unknown').split(' ')[0]}`
                   ) :
                   (metrics.topPharmacists || []).slice(0, 10).map((p, index) => 
                     `${index + 1}. ${p.name || 'Unknown'}`
@@ -1703,12 +1703,19 @@ function App() {  const [salesData, setSalesData] = useState([]);
                     ticks: {
                       color: 'rgba(255, 255, 255, 0.8)',
                       font: {
-                        size: 11,
+                        size: shouldShowYearComparison() ? 10 : 12,
                         weight: '600'
                       },
-                      maxRotation: 45,
-                      minRotation: 45,
-                      padding: 10
+                      maxRotation: shouldShowYearComparison() ? 60 : 45,
+                      minRotation: shouldShowYearComparison() ? 60 : 45,
+                      padding: 10,
+                      callback: function(value, index, values) {
+                        const label = this.getLabelForValue(value);
+                        if (shouldShowYearComparison() && label.length > 12) {
+                          return label.slice(0, 12) + '…';
+                        }
+                        return label;
+                      }
                     }
                   }
                 }
@@ -1781,6 +1788,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
                     display: true,
                     position: shouldShowYearComparison() ? 'bottom' : 'left',
                     labels: {
+
                       color: '#ffffff',
                       font: {
                         size: shouldShowYearComparison() ? 12 : 14,
