@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './App.css';
-import GoogleDriveConfig from './components/GoogleDriveConfig';
 import { Bar, Line, Doughnut } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -106,30 +105,35 @@ function App() {  const [salesData, setSalesData] = useState([]);
   const [selectedMonths, setSelectedMonths] = useState(['all']);
   const [selectedLocations, setSelectedLocations] = useState(['all']);
 
+  // Remove data source button and set up environment-based data loading
+  const isProduction = process.env.NODE_ENV === 'production';
+  const dataSourceUrl = '/api/sales-data'; // Use same endpoint for both dev and prod
+
   const loadSalesData = () => {
+    console.log('Starting to load sales data from:', dataSourceUrl);
     setLoading(true);
     setError(null);
     
-    axios.get('/api/sales-data')
+    axios.get(dataSourceUrl)
       .then(response => {
+        console.log('Sales data loaded successfully:', response.data?.length, 'rows');
+        console.log('Sample data:', response.data?.slice(0, 2));
         setSalesData(response.data);
         setLoading(false);
       })
       .catch(error => {
-        setError('Failed to load sales data');
-        setLoading(false);
         console.error('Error loading sales data:', error);
+        console.error('Error details:', error.response?.data || error.message);
+        setError(`Failed to load sales data: ${error.response?.data?.error || error.message}`);
+        setLoading(false);
       });
   };
 
   useEffect(() => {
     loadSalesData();
-  }, []);
+  }, []); // Remove loadSalesData from dependency array to avoid infinite loops
 
-  const handleDataSourceChange = () => {
-    // Refresh data when Google Drive configuration changes
-    loadSalesData();
-  };// Calculate key metrics from the reference dashboard
+  // Calculate key metrics from the reference dashboard
   const calculateMetrics = (yearFilters = ['all'], monthFilters = ['all'], locationFilters = ['all']) => {
     if (!salesData || salesData.length === 0) {
       return {
@@ -138,7 +142,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
         averageOrderValue: 0,
         topPharmacists: [],
         monthlyTrends: [],
-        monthlyComparison: { months: [], data2024: [], data2025: [] },
+        monthlyComparison: { months: [], data2024: [], data2025: [], transactions2024: [], transactions2025: [] },
         revenueByLocation: [],
         paymentMethods: { cash: 0, credit: 0 },
         yearComparison: { year2024: {}, year2025: {}, pharmacistComparison: [] },
@@ -189,7 +193,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
         (locationFilters.includes('all') || locationFilters.includes(item.LOCATIONNAME))
       );
 
-      // Helper function to calculate top days with returns handling
+      // Helper function to calculate top days with net values from backend
       const calculateTopDays = (data) => {
         const dailyStats = data.reduce((acc, item) => {
           const date = new Date(item.Date);
@@ -213,20 +217,23 @@ function App() {  const [salesData, setSalesData] = useState([]);
             };
           }
           
-          const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
           const amount = Number(item.NetRevenueAmount);
-          const isReturn = invoiceNumber.includes('-R');
           
-          if (isReturn) {
-            acc[dateKey].revenue -= amount;
-            acc[dateKey].returns += amount;
+          // Backend already processed returns (negative amounts are returns)
+          if (amount < 0) {
+            // This is a return transaction (already negated by backend)
+            acc[dateKey].returns += Math.abs(amount);
             acc[dateKey].returnTransactions += 1;
           } else {
-            acc[dateKey].revenue += amount;
+            // This is a regular sale transaction
             acc[dateKey].grossSales += amount;
             acc[dateKey].salesTransactions += 1;
           }
           
+          // Total revenue is net (includes negative returns and positive sales)
+          acc[dateKey].revenue += amount;
+          
+          // Count all transactions (sales + returns)
           acc[dateKey].transactions += 1;
           return acc;
         }, {});
@@ -250,64 +257,164 @@ function App() {  const [salesData, setSalesData] = useState([]);
       // Calculate top days for 2025
       const topDays2025 = calculateTopDays(data2025);      yearComparison.year2024 = {
         totalRevenue: data2024.reduce((sum, item) => {
-          const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
           const amount = Number(item.NetRevenueAmount);
-          const isReturn = invoiceNumber.includes('-R');
-          return sum + (isReturn ? -amount : amount);
+          return sum + amount; // Backend already processed returns
         }, 0),
-        totalTransactions: data2024.length,
-        averageOrderValue: data2024.length > 0 ? data2024.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0) / data2024.length : 0,
+        totalTransactions: data2024.filter(item => {
+          const amount = Number(item.NetRevenueAmount);
+          return amount >= 0; // Count only positive amounts (sales)
+        }).length,
+        averageOrderValue: (() => {
+          const salesTransactions = data2024.filter(item => {
+            const amount = Number(item.NetRevenueAmount);
+            return amount >= 0; // Only positive amounts (sales)
+          });
+          const totalSalesRevenue = salesTransactions.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0);
+          return salesTransactions.length > 0 ? totalSalesRevenue / salesTransactions.length : 0;
+        })(),
         uniqueDays: new Set(data2024.map(item => new Date(item.Date).toDateString())).size,
         averageDailyRevenue: (() => {
           const revenue = data2024.reduce((sum, item) => {
-            const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
             const amount = Number(item.NetRevenueAmount);
-            const isReturn = invoiceNumber.includes('-R');
-            return sum + (isReturn ? -amount : amount);
+            return sum + amount; // Backend already processed returns
           }, 0);
           const days = new Set(data2024.map(item => new Date(item.Date).toDateString())).size;
           return days > 0 ? revenue / days : 0;
         })(),
+        averageDailyTransactions: (() => {
+          const days = new Set(data2024.map(item => new Date(item.Date).toDateString())).size;
+          // Count only positive transactions (sales), since backend already processed returns
+          const salesTransactions = data2024.filter(item => {
+            const amount = Number(item.NetRevenueAmount);
+            return amount > 0; // Only count positive transactions (sales)
+          }).length;
+          return days > 0 ? salesTransactions / days : 0;
+        })(),
+        activePharmacists: new Set(
+          data2024
+            .map(item => formatPharmacistName(item.PharmacistName || item.Pharmacist || item.PHARMACISTNAME || 'Unknown'))
+            .filter(pharmacist => pharmacist && pharmacist !== 'Unknown')
+        ).size,
+        returnsMetrics: (() => {
+          const returnsData = data2024.reduce((acc, item) => {
+            const amount = Number(item.NetRevenueAmount);
+            
+            // Backend already processed returns (negative amounts are returns)
+            if (amount < 0) {
+              acc.totalReturns += Math.abs(amount);
+              acc.returnTransactions += 1;
+            } else {
+              acc.grossSales += amount;
+              acc.salesTransactions += 1;
+            }
+            return acc;
+          }, { totalReturns: 0, returnTransactions: 0, grossSales: 0, salesTransactions: 0 });
+          
+          return returnsData;
+        })(),
         paymentMethods: data2024.reduce((acc, item) => {
-          acc.cash += Number(item.CASHREVENUE || 0);
-          acc.credit += Number(item.CREDITREVENUE || 0);
+          const amount = Number(item.NetRevenueAmount);
+          const cashAmount = Number(item.CASHREVENUE || 0);
+          const creditAmount = Number(item.CREDITREVENUE || 0);
+          
+          // Backend already processed returns, so we use amounts directly
+          acc.cash += cashAmount;
+          acc.credit += creditAmount;
+          
           return acc;
         }, { cash: 0, credit: 0 }),
         pharmacistStats: data2024.reduce((acc, item) => {
-          const pharmacist = item.Pharmacist || 'Unknown';
-          acc[pharmacist] = (acc[pharmacist] || 0) + Number(item.NetRevenueAmount);
+          const fullName = item.PharmacistName || item.Pharmacist || item.PHARMACISTNAME || 'Unknown';
+          const pharmacist = formatPharmacistName(fullName);
+          const amount = Number(item.NetRevenueAmount);
+          
+          if (!acc[pharmacist]) acc[pharmacist] = 0;
+          
+          // Backend already processed returns, so we use amounts directly
+          acc[pharmacist] += amount;
+          
           return acc;
         }, {}),
         topDaySales: topDays2024.topDaySales,
         topDayTransactions: topDays2024.topDayTransactions
       };      yearComparison.year2025 = {
         totalRevenue: data2025.reduce((sum, item) => {
-          const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
           const amount = Number(item.NetRevenueAmount);
-          const isReturn = invoiceNumber.includes('-R');
-          return sum + (isReturn ? -amount : amount);
+          return sum + amount; // Backend already processed returns
         }, 0),
-        totalTransactions: data2025.length,
-        averageOrderValue: data2025.length > 0 ? data2025.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0) / data2025.length : 0,
+        totalTransactions: data2025.filter(item => {
+          const amount = Number(item.NetRevenueAmount);
+          return amount > 0; // Only count positive transactions (sales)
+        }).length,
+        averageOrderValue: (() => {
+          const salesTransactions = data2025.filter(item => {
+            const amount = Number(item.NetRevenueAmount);
+            return amount > 0; // Only count positive transactions (sales)
+          });
+          const totalSalesRevenue = salesTransactions.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0);
+          return salesTransactions.length > 0 ? totalSalesRevenue / salesTransactions.length : 0;
+        })(),
         uniqueDays: new Set(data2025.map(item => new Date(item.Date).toDateString())).size,
         averageDailyRevenue: (() => {
           const revenue = data2025.reduce((sum, item) => {
-            const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
             const amount = Number(item.NetRevenueAmount);
-            const isReturn = invoiceNumber.includes('-R');
-            return sum + (isReturn ? -amount : amount);
+            return sum + amount; // Backend already processed returns
           }, 0);
           const days = new Set(data2025.map(item => new Date(item.Date).toDateString())).size;
           return days > 0 ? revenue / days : 0;
         })(),
+        averageDailyTransactions: (() => {
+          const days = new Set(data2025.map(item => new Date(item.Date).toDateString())).size;
+          // Count only positive transactions (sales), since backend already processed returns
+          const salesTransactions = data2025.filter(item => {
+            const amount = Number(item.NetRevenueAmount);
+            return amount > 0; // Only count positive transactions (sales)
+          }).length;
+          return days > 0 ? salesTransactions / days : 0;
+        })(),
+        activePharmacists: new Set(
+          data2025
+            .map(item => formatPharmacistName(item.PharmacistName || item.Pharmacist || item.PHARMACISTNAME || 'Unknown'))
+            .filter(pharmacist => pharmacist && pharmacist !== 'Unknown')
+        ).size,
+        returnsMetrics: (() => {
+          const returnsData = data2025.reduce((acc, item) => {
+            const amount = Number(item.NetRevenueAmount);
+            
+            // Backend already processed returns (negative amounts are returns)
+            if (amount < 0) {
+              acc.totalReturns += Math.abs(amount);
+              acc.returnTransactions += 1;
+            } else {
+              acc.grossSales += amount;
+              acc.salesTransactions += 1;
+            }
+            return acc;
+          }, { totalReturns: 0, returnTransactions: 0, grossSales: 0, salesTransactions: 0 });
+          
+          return returnsData;
+        })(),
         paymentMethods: data2025.reduce((acc, item) => {
-          acc.cash += Number(item.CASHREVENUE || 0);
-          acc.credit += Number(item.CREDITREVENUE || 0);
+          const amount = Number(item.NetRevenueAmount);
+          const cashAmount = Number(item.CASHREVENUE || 0);
+          const creditAmount = Number(item.CREDITREVENUE || 0);
+          
+          // Backend already processed returns, so we use amounts directly
+          acc.cash += cashAmount;
+          acc.credit += creditAmount;
+          
           return acc;
         }, { cash: 0, credit: 0 }),
         pharmacistStats: data2025.reduce((acc, item) => {
-          const pharmacist = item.Pharmacist || 'Unknown';
-          acc[pharmacist] = (acc[pharmacist] || 0) + Number(item.NetRevenueAmount);
+          const fullName = item.PharmacistName || item.Pharmacist || item.PHARMACISTNAME || 'Unknown';
+          const pharmacist = formatPharmacistName(fullName);
+          const amount = Number(item.NetRevenueAmount);
+          
+          if (!acc[pharmacist]) acc[pharmacist] = 0;
+          
+          // Backend already processed returns, so we use amounts directly
+          acc[pharmacist] += amount;
+          
           return acc;
         }, {}),
         topDaySales: topDays2025.topDaySales,
@@ -336,24 +443,22 @@ function App() {  const [salesData, setSalesData] = useState([]);
       }).sort((a, b) => (b.revenue2024 + b.revenue2025) - (a.revenue2024 + a.revenue2025));
     }    const validData = filteredData;
 
-    // Total metrics with returns handling
+    // Total metrics with returns already handled by backend
     const revenueMetrics = validData.reduce((acc, item) => {
-      const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
       const amount = Number(item.NetRevenueAmount);
-      const isReturn = invoiceNumber.includes('-R');
+      // Backend already processed returns, so we just use the net amounts directly
       
-      if (isReturn) {
-        // Return transaction - subtract from total revenue
-        acc.totalRevenue -= amount;
-        acc.totalReturns += amount;
+      if (amount < 0) {
+        // This is a return transaction (already negated by backend)
+        acc.totalReturns += Math.abs(amount);
         acc.returnTransactions += 1;
       } else {
-        // Regular sale transaction - add to total revenue
-        acc.totalRevenue += amount;
+        // This is a regular sale transaction
         acc.grossSales += amount;
         acc.salesTransactions += 1;
       }
       
+      acc.totalRevenue += amount; // This is already net (returns subtracted)
       acc.totalTransactions += 1;
       return acc;
     }, {
@@ -366,7 +471,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
     });
 
     const totalRevenue = revenueMetrics.totalRevenue;
-    const totalTransactions = revenueMetrics.totalTransactions;
+    const totalTransactions = revenueMetrics.salesTransactions; // Use sales transactions only (net transactions)
     const averageOrderValue = revenueMetrics.salesTransactions > 0 ? revenueMetrics.grossSales / revenueMetrics.salesTransactions : 0;
     
     // Calculate unique days for average daily revenue
@@ -379,48 +484,79 @@ function App() {  const [salesData, setSalesData] = useState([]);
     ).size;
     
     const averageDailyRevenue = uniqueDays > 0 ? totalRevenue / uniqueDays : 0;
+    
+    // Calculate average daily transactions (net sales transactions only)
+    const averageDailyTransactions = uniqueDays > 0 ? totalTransactions / uniqueDays : 0;
 
-    // Top Pharmacists
+    // Top Pharmacists - use net values (returns already processed by backend)
     const pharmacistStats = validData.reduce((acc, item) => {
-      const pharmacist = item.Pharmacist || 'Unknown';
-      acc[pharmacist] = (acc[pharmacist] || 0) + Number(item.NetRevenueAmount);
+      // Try multiple possible name fields
+      const fullName = item.PharmacistName || item.Pharmacist || item.PHARMACISTNAME || 'Unknown';
+      const pharmacist = formatPharmacistName(fullName);
+      const amount = Number(item.NetRevenueAmount);
+      
+      if (!acc[pharmacist]) acc[pharmacist] = 0;
+      // Backend already processed returns, so we just add the net amounts
+      acc[pharmacist] += amount;
+      
       return acc;
     }, {});
     
     const topPharmacists = Object.entries(pharmacistStats)
       .map(([name, revenue]) => ({ name, revenue }))
       .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 10);    // Monthly trends - adapted for multiple filters
+      .slice(0, 10);
+
+    // Debug: Check first 3 entries
+    console.log('Top 3 Pharmacists:', topPharmacists.slice(0, 3).map((p, i) => ({
+      position: i + 1,
+      name: p.name,
+      revenue: p.revenue,
+      formatted: formatCurrency(p.revenue)
+    })));    // Monthly trends - adapted for multiple filters
     let monthlyComparison;
     
-    // Calculate monthly stats by year once
+    // Calculate monthly stats by year once - use net values (returns already processed by backend)
     const monthlyStatsByYear = validData.reduce((acc, item) => {
       const year = item.Year;
       const month = item.Month;
+      const amount = Number(item.NetRevenueAmount);
       
       if (!acc[year]) acc[year] = {};
-      if (!acc[year][month]) acc[year][month] = 0;
+      if (!acc[year][month]) acc[year][month] = { revenue: 0, transactions: 0 };
       
-      acc[year][month] += Number(item.NetRevenueAmount);
+      // Backend already processed returns, so we just add the net amounts
+      acc[year][month].revenue += amount;
+      // Count all transactions (both positive and negative)
+      acc[year][month].transactions += 1;
+      
       return acc;
     }, {});
     
     if (!yearFilters.includes('all') && !monthFilters.includes('all')) {
-      // Specific years and months selected - aggregate view
-      const totalRevenue = validData.reduce((sum, item) => sum + Number(item.NetRevenueAmount), 0);
+      // Specific years and months selected - use net values (returns already processed by backend)
+      const totalRevenue = validData.reduce((sum, item) => {
+        const amount = Number(item.NetRevenueAmount);
+        return sum + amount; // Backend already processed returns
+      }, 0);
+      const totalTransactions = validData.length;
       
       monthlyComparison = {
         months: ['Selected Period'],
         data2024: yearFilters.includes('2024') ? [totalRevenue] : [0],
-        data2025: yearFilters.includes('2025') ? [totalRevenue] : [0]
+        data2025: yearFilters.includes('2025') ? [totalRevenue] : [0],
+        transactions2024: yearFilters.includes('2024') ? [totalTransactions] : [0],
+        transactions2025: yearFilters.includes('2025') ? [totalTransactions] : [0]
       };
     } else if (!yearFilters.includes('all')) {
       // Specific years selected - show monthly breakdown
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
       monthlyComparison = {
         months: months,
-        data2024: yearFilters.includes('2024') ? months.map((_, index) => monthlyStatsByYear[2024]?.[index + 1] || 0) : [],
-        data2025: yearFilters.includes('2025') ? months.map((_, index) => monthlyStatsByYear[2025]?.[index + 1] || 0) : []
+        data2024: yearFilters.includes('2024') ? months.map((_, index) => monthlyStatsByYear[2024]?.[index + 1]?.revenue || 0) : [],
+        data2025: yearFilters.includes('2025') ? months.map((_, index) => monthlyStatsByYear[2025]?.[index + 1]?.revenue || 0) : [],
+        transactions2024: yearFilters.includes('2024') ? months.map((_, index) => monthlyStatsByYear[2024]?.[index + 1]?.transactions || 0) : [],
+        transactions2025: yearFilters.includes('2025') ? months.map((_, index) => monthlyStatsByYear[2025]?.[index + 1]?.transactions || 0) : []
       };
     } else if (!monthFilters.includes('all')) {
       // Specific months selected - show year comparison
@@ -428,8 +564,10 @@ function App() {  const [salesData, setSalesData] = useState([]);
         // Single month - show year comparison
         monthlyComparison = {
           months: ['2024', '2025'],
-          data2024: [monthlyStatsByYear[2024]?.[parseInt(monthFilters[0])] || 0, 0],
-          data2025: [0, monthlyStatsByYear[2025]?.[parseInt(monthFilters[0])] || 0]
+          data2024: [monthlyStatsByYear[2024]?.[parseInt(monthFilters[0])]?.revenue || 0, 0],
+          data2025: [0, monthlyStatsByYear[2025]?.[parseInt(monthFilters[0])]?.revenue || 0],
+          transactions2024: [monthlyStatsByYear[2024]?.[parseInt(monthFilters[0])]?.transactions || 0, 0],
+          transactions2025: [0, monthlyStatsByYear[2025]?.[parseInt(monthFilters[0])]?.transactions || 0]
         };
       } else {
         // Multiple months - show selected months comparison
@@ -437,23 +575,33 @@ function App() {  const [salesData, setSalesData] = useState([]);
         const selectedMonthNames = monthFilters.map(m => monthNames[parseInt(m)]);
         monthlyComparison = {
           months: selectedMonthNames,
-          data2024: monthFilters.map(m => monthlyStatsByYear[2024]?.[parseInt(m)] || 0),
-          data2025: monthFilters.map(m => monthlyStatsByYear[2025]?.[parseInt(m)] || 0)        };
+          data2024: monthFilters.map(m => monthlyStatsByYear[2024]?.[parseInt(m)]?.revenue || 0),
+          data2025: monthFilters.map(m => monthlyStatsByYear[2025]?.[parseInt(m)]?.revenue || 0),
+          transactions2024: monthFilters.map(m => monthlyStatsByYear[2024]?.[parseInt(m)]?.transactions || 0),
+          transactions2025: monthFilters.map(m => monthlyStatsByYear[2025]?.[parseInt(m)]?.transactions || 0)
+        };
       }
     } else {
       // No filters or all selected - show complete year comparison
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       monthlyComparison = {
         months: months,
-        data2024: months.map((_, index) => monthlyStatsByYear[2024]?.[index + 1] || 0),
-        data2025: months.map((_, index) => monthlyStatsByYear[2025]?.[index + 1] || 0)
+        data2024: months.map((_, index) => monthlyStatsByYear[2024]?.[index + 1]?.revenue || 0),
+        data2025: months.map((_, index) => monthlyStatsByYear[2025]?.[index + 1]?.revenue || 0),
+        transactions2024: months.map((_, index) => monthlyStatsByYear[2024]?.[index + 1]?.transactions || 0),
+        transactions2025: months.map((_, index) => monthlyStatsByYear[2025]?.[index + 1]?.transactions || 0)
       };
     }
 
-    // Keep original monthly trends for backward compatibility
+    // Keep original monthly trends for backward compatibility - use net values (returns already processed by backend)
     const monthlyStats = validData.reduce((acc, item) => {
       const monthKey = `${item.Year}-${item.Month.toString().padStart(2, '0')}`;
-      acc[monthKey] = (acc[monthKey] || 0) + Number(item.NetRevenueAmount);
+      const amount = Number(item.NetRevenueAmount);
+      
+      if (!acc[monthKey]) acc[monthKey] = 0;
+      // Backend already processed returns, so we just add the net amounts
+      acc[monthKey] += amount;
+      
       return acc;
     }, {});
 
@@ -461,27 +609,46 @@ function App() {  const [salesData, setSalesData] = useState([]);
       .map(([month, revenue]) => ({ month, revenue }))
       .sort((a, b) => a.month.localeCompare(b.month));
 
-    // Revenue by Location
+    // Revenue by Location - use net values (returns already processed by backend)
     const locationStats = validData.reduce((acc, item) => {
       const location = item.LOCATIONNAME || 'Unknown';
-      acc[location] = (acc[location] || 0) + Number(item.NetRevenueAmount);
+      const amount = Number(item.NetRevenueAmount);
+      
+      if (!acc[location]) acc[location] = 0;
+      // Backend already processed returns, so we just add the net amounts
+      acc[location] += amount;
+      
       return acc;
     }, {});
 
     const revenueByLocation = Object.entries(locationStats)
       .map(([location, revenue]) => ({ location, revenue }))
       .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 8);    // Payment Methods
+      .slice(0, 8);    // Payment Methods - use net values (backend handles returns for revenue amounts)
     const paymentMethods = validData.reduce((acc, item) => {
-      acc.cash += Number(item.CASHREVENUE || 0);
-      acc.credit += Number(item.CREDITREVENUE || 0);
+      const cashAmount = Number(item.CASHREVENUE || 0);
+      const creditAmount = Number(item.CREDITREVENUE || 0);
+      
+      // For payment methods, we need to check if this is a return based on NetRevenueAmount
+      const netAmount = Number(item.NetRevenueAmount);
+      
+      if (netAmount < 0) {
+        // This is a return transaction - subtract payment amounts
+        acc.cash -= Math.abs(cashAmount);
+        acc.credit -= Math.abs(creditAmount);
+      } else {
+        // Regular sale transaction - add payment amounts
+        acc.cash += cashAmount;
+        acc.credit += creditAmount;
+      }
+      
       return acc;
     }, { cash: 0, credit: 0 });    // Active Pharmacists Count - unique pharmacists in the filtered period
     const activePharmacists = new Set(
       validData
-        .map(item => item.PharmacistName || item.Pharmacist || item.PHARMACISTNAME || 'Unknown')
+        .map(item => formatPharmacistName(item.PharmacistName || item.Pharmacist || item.PHARMACISTNAME || 'Unknown'))
         .filter(pharmacist => pharmacist && pharmacist !== 'Unknown')
-    ).size;    // Calculate daily aggregations for top day metrics (with returns handling)
+    ).size;    // Calculate daily aggregations for top day metrics (use net values - returns already processed by backend)
     const dailyStats = validData.reduce((acc, item) => {
       const date = new Date(item.Date);
       const dateKey = date.toDateString();
@@ -504,21 +671,21 @@ function App() {  const [salesData, setSalesData] = useState([]);
         };
       }
       
-      const invoiceNumber = item.INVOICENUMBER || item.InvoiceNumber || '';
       const amount = Number(item.NetRevenueAmount);
-      const isReturn = invoiceNumber.includes('-R');
       
-      if (isReturn) {
-        // Return transaction - subtract from revenue and count separately
-        acc[dateKey].revenue -= amount;
-        acc[dateKey].returns += amount;
+      // Backend already processed returns (negative amounts are returns)
+      if (amount < 0) {
+        // This is a return transaction (already negated by backend)
+        acc[dateKey].returns += Math.abs(amount);
         acc[dateKey].returnTransactions += 1;
       } else {
-        // Regular sale transaction - add to revenue
-        acc[dateKey].revenue += amount;
+        // This is a regular sale transaction
         acc[dateKey].grossSales += amount;
         acc[dateKey].salesTransactions += 1;
       }
+      
+      // Total revenue is net (includes negative returns and positive sales)
+      acc[dateKey].revenue += amount;
       
       // Count all transactions (sales + returns)
       acc[dateKey].transactions += 1;
@@ -541,6 +708,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
       totalTransactions,
       averageOrderValue,
       averageDailyRevenue,
+      averageDailyTransactions,
       uniqueDays,
       activePharmacists,
       topPharmacists,
@@ -560,6 +728,18 @@ function App() {  const [salesData, setSalesData] = useState([]);
     };
   };
 
+  // Function to format pharmacist names to show only first and second names
+  const formatPharmacistName = (fullName) => {
+    if (!fullName || fullName === 'Unknown') return fullName;
+    
+    // Split the name by spaces and take only the first two parts
+    const nameParts = fullName.trim().split(/\s+/);
+    if (nameParts.length >= 2) {
+      return `${nameParts[0]} ${nameParts[1]}`;
+    }
+    return nameParts[0]; // If only one name part, return it
+  };
+
   // Number formatting function for M/K notation
   const formatNumber = (value) => {
     if (!value) return '0';
@@ -576,15 +756,15 @@ function App() {  const [salesData, setSalesData] = useState([]);
 
   // Format currency with M/K notation
   const formatCurrency = (value) => {
-    if (!value) return '$0';
+    if (!value) return '0';
     const num = Math.abs(value);
     
     if (num >= 1000000) {
-      return '$' + (value / 1000000).toFixed(1) + 'M';
+      return (value / 1000000).toFixed(1) + 'M';
     } else if (num >= 1000) {
-      return '$' + (value / 1000).toFixed(1) + 'K';
+      return (value / 1000).toFixed(1) + 'K';
     } else {
-      return '$' + value.toFixed(0);
+      return value.toFixed(0);
     }
   };
   // Generate dynamic chart title based on filters
@@ -612,6 +792,34 @@ function App() {  const [salesData, setSalesData] = useState([]);
       }
     } else {
       return 'Monthly Revenue Trend - 2024 vs 2025';
+    }
+  };
+
+  // Generate dynamic chart title for transactions based on filters
+  const getTransactionChartTitle = () => {
+    const hasSpecificYears = !selectedYears.includes('all');
+    const hasSpecificMonths = !selectedMonths.includes('all');
+    
+    if (hasSpecificYears && hasSpecificMonths) {
+      const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 
+                         'July', 'August', 'September', 'October', 'November', 'December'];
+      if (selectedYears.length === 1 && selectedMonths.length === 1) {
+        return `Transaction Trend - ${monthNames[parseInt(selectedMonths[0])]} ${selectedYears[0]}`;
+      } else {
+        return `Transaction Trend - Multiple Periods Selected`;
+      }
+    } else if (hasSpecificYears) {
+      return selectedYears.length === 1 ? `Monthly Transaction Trend - ${selectedYears[0]}` : `Monthly Transaction Trend - Multiple Years`;
+    } else if (hasSpecificMonths) {
+      const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 
+                         'July', 'August', 'September', 'October', 'November', 'December'];
+      if (selectedMonths.length === 1) {
+        return `Transaction Trend - ${monthNames[parseInt(selectedMonths[0])]} (All Years)`;
+      } else {
+        return `Transaction Trend - Multiple Months`;
+      }
+    } else {
+      return 'Monthly Transaction Trend - 2024 vs 2025';
     }
   };
 
@@ -669,39 +877,24 @@ function App() {  const [salesData, setSalesData] = useState([]);
   };
 
   if (loading) {
-    return (      <div className="App">
-        <div className="container">
-          <h1 className="main-title">
-            <img 
-              src="https://static.vecteezy.com/system/resources/previews/019/599/688/non_2x/pharmacy-icon-trendy-and-modern-symbol-for-graphic-and-web-design-free-vector.jpg" 
-              alt="Pharmacy Icon" 
-              className="pharmacy-icon" 
-            />
-            Pharmacy Dashboard
-          </h1>
-          <div className="loading-state">
-            <div className="loading-spinner"></div>
-            <p>Loading sales analytics...</p>
-            <p>Processing 300,000+ records...</p>
-          </div>
-          <footer className="footer">
-            <p>Created By Dr.Saad Naiem Ali</p>
-          </footer>
+    return (
+      <div className="loading">
+        <h2>Loading Pharmacy Analytics Dashboard</h2>
+        <div className="loading-spinner"></div>
+        <p>Processing sales data...</p>
+        <div className="loading-footer">
+          <p className="creator-credit">Created By Dr.Saad Naiem Ali™</p>
         </div>
       </div>
     );
   }
 
   if (error) {
-    return (      <div className="App">
+    return (
+      <div className="App">
         <div className="container">
           <h1 className="main-title">
-            <img 
-              src="https://static.vecteezy.com/system/resources/previews/019/599/688/non_2x/pharmacy-icon-trendy-and-modern-symbol-for-graphic-and-web-design-free-vector.jpg" 
-              alt="Pharmacy Icon" 
-              className="pharmacy-icon" 
-            />
-            Pharmacy Dashboard
+            💊 Pharmacy Analytics Dashboard
           </h1>
           <div className="error-state">
             <p>{error}</p>
@@ -716,26 +909,14 @@ function App() {  const [salesData, setSalesData] = useState([]);
 
   return (
     <div className="App">
-      <div className="container">        <h1 className="main-title">
-            <img 
-              src="https://static.vecteezy.com/system/resources/previews/019/599/688/non_2x/pharmacy-icon-trendy-and-modern-symbol-for-graphic-and-web-design-free-vector.jpg" 
-              alt="Pharmacy Icon" 
-              className="pharmacy-icon" 
-            />
-            Pharmacy Dashboard
-          </h1>
-          {/* Google Drive Configuration */}
-        <GoogleDriveConfig onDataSourceChange={handleDataSourceChange} />
+      <div className="container">
+        <h1 className="main-title">
+          💊 Pharmacy Analytics Dashboard
+        </h1>
         
         {/* Filter Instructions */}
         <div className="filter-instructions">
           <p>
-            <img 
-              src="https://static.vecteezy.com/system/resources/previews/019/599/688/non_2x/pharmacy-icon-trendy-and-modern-symbol-for-graphic-and-web-design-free-vector.jpg" 
-              alt="Pharmacy Icon" 
-              className="metric-icon-img" 
-              style={{display: 'inline-block', verticalAlign: 'middle', marginRight: '8px'}}
-            />
             <span className="highlight">Multi-Select Filters:</span> Click to select multiple years, months, or locations for advanced analysis
           </p>
         </div>
@@ -810,22 +991,40 @@ function App() {  const [salesData, setSalesData] = useState([]);
                   <h3>Total Revenue</h3>
                   <div className="metric-icon">💰</div>
                 </div>
-                <div className="metric-value">
+                <div className="metric-value metric-value-2024 currency-value">
                   2024: {formatCurrency(metrics.yearComparison.year2024.totalRevenue)}
-                </div>                <div className="metric-value">
+                </div>                <div className="metric-value metric-value-2025 currency-value">
                   2025: {formatCurrency(metrics.yearComparison.year2025.totalRevenue)}
                 </div>
                 <div className="metric-change positive">
                   {getMonthSummary()}
                 </div>
-              </div>              <div className="metric-card total-orders">
+              </div>
+
+              <div className="metric-card avg-daily-transactions">
+                <div className="metric-header">
+                  <h3>Average Daily Transactions</h3>
+                  <div className="metric-icon">📈</div>
+                </div>
+                <div className="metric-value metric-value-2024">
+                  2024: {formatNumber(metrics.yearComparison.year2024.averageDailyTransactions)}
+                </div>
+                <div className="metric-value metric-value-2025">
+                  2025: {formatNumber(metrics.yearComparison.year2025.averageDailyTransactions)}
+                </div>
+                <div className="metric-change positive">
+                  {getMonthSummary()}
+                </div>
+              </div>
+
+              <div className="metric-card total-orders">
                 <div className="metric-header">
                   <h3>Total Transactions</h3>
                   <div className="metric-icon">📋</div>
                 </div>
-                <div className="metric-value">
+                <div className="metric-value metric-value-2024">
                   2024: {formatNumber(metrics.yearComparison.year2024.totalTransactions)}
-                </div>                <div className="metric-value">
+                </div>                <div className="metric-value metric-value-2025">
                   2025: {formatNumber(metrics.yearComparison.year2025.totalTransactions)}
                 </div>
                 <div className="metric-change positive">
@@ -836,10 +1035,10 @@ function App() {  const [salesData, setSalesData] = useState([]);
                   <h3>Average Order Value</h3>
                   <div className="metric-icon">💳</div>
                 </div>
-                <div className="metric-value">
+                <div className="metric-value metric-value-2024 currency-value">
                   2024: {formatCurrency(metrics.yearComparison.year2024.averageOrderValue)}
                 </div>
-                <div className="metric-value">
+                <div className="metric-value metric-value-2025 currency-value">
                   2025: {formatCurrency(metrics.yearComparison.year2025.averageOrderValue)}
                 </div>
                 <div className="metric-change positive">
@@ -855,10 +1054,10 @@ function App() {  const [salesData, setSalesData] = useState([]);
                   <h3>Average Daily Revenue</h3>
                   <div className="metric-icon">📅</div>
                 </div>
-                <div className="metric-value">
+                <div className="metric-value metric-value-2024 currency-value">
                   2024: {formatCurrency(metrics.yearComparison.year2024.averageDailyRevenue)}
                 </div>
-                <div className="metric-value">
+                <div className="metric-value metric-value-2025 currency-value">
                   2025: {formatCurrency(metrics.yearComparison.year2025.averageDailyRevenue)}
                 </div>                <div className="metric-change positive">
                   {metrics.yearComparison.year2024.uniqueDays} vs {metrics.yearComparison.year2025.uniqueDays} days
@@ -868,12 +1067,12 @@ function App() {  const [salesData, setSalesData] = useState([]);
               <div className="metric-card top-day-sales">
                 <div className="metric-header">
                   <h3>Top Day Sales</h3>
-                  <div className="metric-icon">📈</div>
+                  <div className="metric-icon">🏆</div>
                 </div>
-                <div className="metric-value">
+                <div className="metric-value metric-value-2024 currency-value">
                   2024: {formatCurrency(metrics.yearComparison.year2024.topDaySales.revenue)}
                 </div>
-                <div className="metric-value">
+                <div className="metric-value metric-value-2025 currency-value">
                   2025: {formatCurrency(metrics.yearComparison.year2025.topDaySales.revenue)}
                 </div>
                 <div className="metric-change positive">
@@ -886,10 +1085,10 @@ function App() {  const [salesData, setSalesData] = useState([]);
                   <h3>Top Day Transactions</h3>
                   <div className="metric-icon">📊</div>
                 </div>
-                <div className="metric-value">
+                <div className="metric-value metric-value-2024">
                   2024: {formatNumber(metrics.yearComparison.year2024.topDayTransactions.transactions)}
                 </div>
-                <div className="metric-value">
+                <div className="metric-value metric-value-2025">
                   2025: {formatNumber(metrics.yearComparison.year2025.topDayTransactions.transactions)}
                 </div>
                 <div className="metric-change positive">
@@ -897,34 +1096,48 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 </div>
               </div>
 
+              <div className="metric-card returns-summary">
+                <div className="metric-header">
+                  <h3>Returns Summary</h3>
+                  <div className="metric-icon">↩️</div>
+                </div>
+                <div className="metric-value metric-value-2024 currency-value">
+                  2024: {formatCurrency(metrics.yearComparison.year2024.returnsMetrics.totalReturns)}
+                </div>
+                <div className="metric-value metric-value-2025 currency-value">
+                  2025: {formatCurrency(metrics.yearComparison.year2025.returnsMetrics.totalReturns)}
+                </div>
+                <div className="metric-change neutral">
+                  {metrics.yearComparison.year2024.returnsMetrics.returnTransactions} vs {metrics.yearComparison.year2025.returnsMetrics.returnTransactions} returns
+                </div>
+              </div>
+
               <div className="metric-card active-pharmacists">
                 <div className="metric-header">
-                  <h3>Year Comparison</h3>
-                  <div className="metric-icon">
-                    <img 
-                      src="https://static.vecteezy.com/system/resources/previews/019/599/688/non_2x/pharmacy-icon-trendy-and-modern-symbol-for-graphic-and-web-design-free-vector.jpg" 
-                      alt="Pharmacy Icon" 
-                      className="metric-icon-img" 
-                    />
-                  </div>
+                  <h3>Active Pharmacists</h3>
+                  <div className="metric-icon">👨‍⚕️</div>
                 </div>
-                <div className="metric-value">
-                  {((metrics.yearComparison.year2025.totalRevenue - metrics.yearComparison.year2024.totalRevenue) / (metrics.yearComparison.year2024.totalRevenue || 1) * 100).toFixed(1)}%
+                <div className="metric-value metric-value-2024">
+                  2024: {metrics.yearComparison.year2024.activePharmacists || 0}
+                </div>
+                <div className="metric-value metric-value-2025">
+                  2025: {metrics.yearComparison.year2025.activePharmacists || 0}
                 </div>
                 <div className="metric-change positive">
-                  Growth Rate
+                  {getMonthSummary()}
                 </div>
               </div>
             </>
           ) : (
             // Regular Cards
             <>
+              {/* 1. Total Revenue */}
               <div className="metric-card total-revenue">
                 <div className="metric-header">
                   <h3>Total Revenue</h3>
                   <div className="metric-icon">💰</div>
                 </div>
-                <div className="metric-value">
+                <div className="metric-value currency-value">
                   {formatCurrency(metrics.totalRevenue)}
                 </div>
                 <div className="metric-change positive">
@@ -932,6 +1145,21 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 </div>
               </div>
 
+              {/* 2. Average Daily Revenue */}
+              <div className="metric-card avg-daily-revenue">
+                <div className="metric-header">
+                  <h3>Average Daily Revenue</h3>
+                  <div className="metric-icon">📅</div>
+                </div>
+                <div className="metric-value currency-value">
+                  {formatCurrency(metrics.averageDailyRevenue)}
+                </div>
+                <div className="metric-change positive">
+                  {metrics.uniqueDays} active days
+                </div>
+              </div>
+
+              {/* 3. Total Transactions */}
               <div className="metric-card total-orders">
                 <div className="metric-header">
                   <h3>Total Transactions</h3>
@@ -943,42 +1171,38 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 <div className="metric-change positive">
                   {getFilterSummary()}
                 </div>
-              </div>              <div className="metric-card avg-order">
+              </div>
+
+              {/* 4. Average Daily Transactions */}
+              <div className="metric-card avg-daily-transactions">
                 <div className="metric-header">
-                  <h3>Average Order Value</h3>
-                  <div className="metric-icon">💳</div>
+                  <h3>Average Daily Transactions</h3>
+                  <div className="metric-icon">📊</div>
                 </div>
                 <div className="metric-value">
-                  {formatCurrency(metrics.averageOrderValue)}
-                </div>
-                <div className="metric-change positive">
-                  {getFilterSummary()}
-                </div>
-              </div>              <div className="metric-card avg-daily-revenue">
-                <div className="metric-header">
-                  <h3>Average Daily Revenue</h3>
-                  <div className="metric-icon">📅</div>
-                </div>
-                <div className="metric-value">
-                  {formatCurrency(metrics.averageDailyRevenue)}
+                  {formatNumber(metrics.averageDailyTransactions)}
                 </div>
                 <div className="metric-change positive">
                   {metrics.uniqueDays} active days
                 </div>
               </div>
 
+              {/* 5. Top Day Sales */}
               <div className="metric-card top-day-sales">
                 <div className="metric-header">
                   <h3>Top Day Sales</h3>
-                  <div className="metric-icon">📈</div>
+                  <div className="metric-icon">🏆</div>
                 </div>
-                <div className="metric-value">
+                <div className="metric-value currency-value">
                   {formatCurrency(metrics.topDaySales.revenue)}
                 </div>
                 <div className="metric-change positive">
                   {metrics.topDaySales.dayName}, {metrics.topDaySales.dateFormatted}
                 </div>
-              </div>              <div className="metric-card top-day-transactions">
+              </div>
+
+              {/* 6. Top Day Transactions */}
+              <div className="metric-card top-day-transactions">
                 <div className="metric-header">
                   <h3>Top Day Transactions</h3>
                   <div className="metric-icon">📊</div>
@@ -991,12 +1215,27 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 </div>
               </div>
 
+              {/* 7. Average Order Value */}
+              <div className="metric-card avg-order">
+                <div className="metric-header">
+                  <h3>Average Order Value</h3>
+                  <div className="metric-icon">💳</div>
+                </div>
+                <div className="metric-value currency-value">
+                  {formatCurrency(metrics.averageOrderValue)}
+                </div>
+                <div className="metric-change positive">
+                  {getFilterSummary()}
+                </div>
+              </div>
+
+              {/* 8. Returns Summary */}
               <div className="metric-card returns-summary">
                 <div className="metric-header">
                   <h3>Returns Summary</h3>
                   <div className="metric-icon">↩️</div>
                 </div>
-                <div className="metric-value">
+                <div className="metric-value currency-value">
                   {formatCurrency(metrics.totalReturns)}
                 </div>
                 <div className="metric-change neutral">
@@ -1004,6 +1243,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 </div>
               </div>
 
+              {/* 9. Active Pharmacists */}
               <div className="metric-card active-pharmacists">
                 <div className="metric-header">
                   <h3>Active Pharmacists</h3>
@@ -1022,7 +1262,8 @@ function App() {  const [salesData, setSalesData] = useState([]);
 
         {/* Charts Section */}
         <div className="charts-grid">
-          {/* Monthly Revenue Trend */}          <div className="chart-card large">
+          {/* Monthly Revenue Trend */}
+          <div className="chart-card half-width">
             <h3>{getChartTitle()}</h3>
             <Line
               data={{
@@ -1038,7 +1279,8 @@ function App() {  const [salesData, setSalesData] = useState([]);
                   pointBackgroundColor: '#3b82f6',
                   pointBorderColor: '#ffffff',
                   pointBorderWidth: 2,
-                  pointRadius: 5,
+                  pointRadius: 8,
+                  pointHoverRadius: 10,
                 }, {
                   label: '2025',
                   data: metrics.monthlyComparison.data2025,
@@ -1050,17 +1292,29 @@ function App() {  const [salesData, setSalesData] = useState([]);
                   pointBackgroundColor: '#10b981',
                   pointBorderColor: '#ffffff',
                   pointBorderWidth: 2,
-                  pointRadius: 5,
+                  pointRadius: 8,
+                  pointHoverRadius: 10,
                 }]
-              }}              options={{
+              }}
+              options={{
                 responsive: true,
-                maintainAspectRatio: false,                plugins: {
+                maintainAspectRatio: false,
+                layout: {
+                  padding: {
+                    top: 20,
+                    bottom: 30,
+                    left: 20,
+                    right: 20
+                  }
+                },
+                plugins: {
                   legend: { 
                     display: true,
                     position: 'top',
                     labels: {
                       usePointStyle: true,
                       padding: 20,
+                      color: '#ffffff',
                       font: {
                         size: 12,
                         weight: '500'
@@ -1068,9 +1322,23 @@ function App() {  const [salesData, setSalesData] = useState([]);
                     }
                   },
                   tooltip: {
+                    enabled: true,
                     callbacks: {
+                      title: function(context) {
+                        if (shouldShowYearComparison() && !selectedMonths.includes('all')) {
+                          // Show specific month name for the hovered data point
+                          const hoveredMonth = context[0].label;
+                          return `${hoveredMonth} - Year Comparison`;
+                        }
+                        return `Month: ${context[0].label}`;
+                      },
                       label: function(context) {
-                        return context.dataset.label + ': ' + formatCurrency(context.parsed.y);
+                        if (shouldShowYearComparison() && !selectedMonths.includes('all')) {
+                          // Show specific month name for the hovered data point
+                          const hoveredMonth = context.label;
+                          return `${context.dataset.label} ${hoveredMonth}: ${formatCurrency(context.parsed.y)}`;
+                        }
+                        return `${context.dataset.label}: ${formatCurrency(context.parsed.y)}`;
                       }
                     }
                   }
@@ -1078,15 +1346,58 @@ function App() {  const [salesData, setSalesData] = useState([]);
                 scales: {
                   y: {
                     beginAtZero: true,
+                    title: {
+                      display: true,
+                      text: 'Revenue',
+                      color: '#ffffff',
+                      font: {
+                        size: 14,
+                        weight: '600'
+                      },
+                      padding: {
+                        bottom: 10
+                      }
+                    },
+                    grid: {
+                      color: 'rgba(255, 255, 255, 0.1)',
+                      drawBorder: false,
+                    },
                     ticks: {
+                      color: '#ffffff',
+                      font: {
+                        size: 11,
+                        weight: '500'
+                      },
                       callback: function(value) {
                         return formatCurrency(value);
-                      }
+                      },
+                      padding: 15
                     }
                   },
                   x: {
+                    title: {
+                      display: true,
+                      text: 'Month',
+                      color: '#ffffff',
+                      font: {
+                        size: 14,
+                        weight: '600'
+                      },
+                      padding: {
+                        top: 10
+                      }
+                    },
+                    grid: {
+                      color: 'rgba(255, 255, 255, 0.1)',
+                      drawBorder: false,
+                    },
                     ticks: {
-                      maxRotation: 0,
+                      color: '#ffffff',
+                      font: {
+                        size: 11,
+                        weight: '500'
+                      },
+                      maxRotation: 45,
                       minRotation: 0
                     }
                   }
@@ -1095,40 +1406,219 @@ function App() {  const [salesData, setSalesData] = useState([]);
             />
           </div>
 
-          {/* Top Pharmacists */}          <div className="chart-card">
-            <h3>Top Performing Pharmacists {shouldShowYearComparison() ? '- Year Comparison' : ''}</h3>
+          {/* Monthly Transaction Trend */}
+          <div className="chart-card half-width">
+            <h3>{getTransactionChartTitle()}</h3>
+            <Line
+              data={{
+                labels: metrics.monthlyComparison.months,
+                datasets: [{
+                  label: '2024',
+                  data: metrics.monthlyComparison.transactions2024,
+                  borderColor: '#ec4899',
+                  backgroundColor: 'rgba(236, 72, 153, 0.1)',
+                  borderWidth: 3,
+                  fill: false,
+                  tension: 0.4,
+                  pointBackgroundColor: '#ec4899',
+                  pointBorderColor: '#ffffff',
+                  pointBorderWidth: 2,
+                  pointRadius: 8,
+                  pointHoverRadius: 10,
+                }, {
+                  label: '2025',
+                  data: metrics.monthlyComparison.transactions2025,
+                  borderColor: '#f59e0b',
+                  backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                  borderWidth: 3,
+                  fill: false,
+                  tension: 0.4,
+                  pointBackgroundColor: '#f59e0b',
+                  pointBorderColor: '#ffffff',
+                  pointBorderWidth: 2,
+                  pointRadius: 8,
+                  pointHoverRadius: 10,
+                }]
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                layout: {
+                  padding: {
+                    top: 20,
+                    bottom: 30,
+                    left: 20,
+                    right: 20
+                  }
+                },
+                plugins: {
+                  legend: { 
+                    display: true,
+                    position: 'top',
+                    labels: {
+                      usePointStyle: true,
+                      padding: 20,
+                      color: '#ffffff',
+                      font: {
+                        size: 12,
+                        weight: '500'
+                      }
+                    }
+                  },
+                  tooltip: {
+                    enabled: true,
+                    callbacks: {
+                      title: function(context) {
+                        if (shouldShowYearComparison() && !selectedMonths.includes('all')) {
+                          // Show specific month name for the hovered data point
+                          const hoveredMonth = context[0].label;
+                          return `${hoveredMonth} - Year Comparison`;
+                        }
+                        return `Month: ${context[0].label}`;
+                      },
+                      label: function(context) {
+                        if (shouldShowYearComparison() && !selectedMonths.includes('all')) {
+                          // Show specific month name for the hovered data point
+                          const hoveredMonth = context.label;
+                          return `${context.dataset.label} ${hoveredMonth}: ${formatNumber(context.parsed.y)} transactions`;
+                        }
+                        return `${context.dataset.label}: ${formatNumber(context.parsed.y)} transactions`;
+                      }
+                    }
+                  }
+                },
+                scales: {
+                  y: {
+                    beginAtZero: true,
+                    title: {
+                      display: true,
+                      text: 'Number of Transactions',
+                      color: '#ffffff',
+                      font: {
+                        size: 14,
+                        weight: '600'
+                      },
+                      padding: {
+                        bottom: 10
+                      }
+                    },
+                    grid: {
+                      color: 'rgba(255, 255, 255, 0.1)',
+                      drawBorder: false,
+                    },
+                    ticks: {
+                      color: '#ffffff',
+                      font: {
+                        size: 11,
+                        weight: '500'
+                      },
+                      callback: function(value) {
+                        return formatNumber(value);
+                      },
+                      padding: 15
+                    }
+                  },
+                  x: {
+                    title: {
+                      display: true,
+                      text: 'Month',
+                      color: '#ffffff',
+                      font: {
+                        size: 14,
+                        weight: '600'
+                      },
+                      padding: {
+                        top: 10
+                      }
+                    },
+                    grid: {
+                      color: 'rgba(255, 255, 255, 0.1)',
+                      drawBorder: false,
+                    },
+                    ticks: {
+                      color: '#ffffff',
+                      font: {
+                        size: 11,
+                        weight: '500'
+                      },
+                      maxRotation: 45,
+                      minRotation: 0,
+                      padding: 15
+                    }
+                  }
+                }
+              }}
+            />
+          </div>
+
+          {/* Top Pharmacists */}          <div className="chart-card pharmacist-chart">
+            <h3>🏆 Top 10 Performing Pharmacists {shouldShowYearComparison() ? '- Year Comparison' : ''}</h3>
             <Bar
               data={{                labels: shouldShowYearComparison() ? 
-                  (metrics.yearComparison.pharmacistComparison || []).slice(0, 5).map(p => p.name ? p.name.split(' ')[0] : 'Unknown') :
-                  (metrics.topPharmacists || []).slice(0, 5).map(p => p.name ? p.name.split(' ')[0] : 'Unknown'),
+                  (metrics.yearComparison.pharmacistComparison || []).slice(0, 10).map((p, index) => 
+                    `${index + 1}. ${p.name || 'Unknown'}`
+                  ) :
+                  (metrics.topPharmacists || []).slice(0, 10).map((p, index) => 
+                    `${index + 1}. ${p.name || 'Unknown'}`
+                  ),
                 datasets: shouldShowYearComparison() ? [                  {
-                    label: '2024',
-                    data: (metrics.yearComparison.pharmacistComparison || []).slice(0, 5).map(p => p.revenue2024 || 0),
-                    backgroundColor: '#3b82f6',
-                    borderColor: '#1d4ed8',
-                    borderWidth: 1,
-                    borderRadius: 4,
+                    label: '2024 Revenue',
+                    data: (metrics.yearComparison.pharmacistComparison || []).slice(0, 10).map(p => p.revenue2024 || 0),
+                    backgroundColor: 'rgba(59, 130, 246, 0.8)',
+                    borderColor: '#3b82f6',
+                    borderWidth: 2,
+                    borderRadius: 6,
                     borderSkipped: false,
+                    hoverBackgroundColor: 'rgba(59, 130, 246, 0.9)',
+                    hoverBorderColor: '#1d4ed8',
+                    hoverBorderWidth: 3,
                   },
                   {
-                    label: '2025',
-                    data: (metrics.yearComparison.pharmacistComparison || []).slice(0, 5).map(p => p.revenue2025 || 0),
-                    backgroundColor: '#10b981',
-                    borderColor: '#059669',
-                    borderWidth: 1,
-                    borderRadius: 4,
+                    label: '2025 Revenue',
+                    data: (metrics.yearComparison.pharmacistComparison || []).slice(0, 10).map(p => p.revenue2025 || 0),
+                    backgroundColor: 'rgba(16, 185, 129, 0.8)',
+                    borderColor: '#10b981',
+                    borderWidth: 2,
+                    borderRadius: 6,
                     borderSkipped: false,
+                    hoverBackgroundColor: 'rgba(16, 185, 129, 0.9)',
+                    hoverBorderColor: '#059669',
+                    hoverBorderWidth: 3,
                   }                ] : [{
-                  data: (metrics.topPharmacists || []).slice(0, 5).map(p => p.revenue || 0),
+                  label: 'Revenue',
+                  data: (metrics.topPharmacists || []).slice(0, 10).map(p => p.revenue || 0),
                   backgroundColor: [
-                    '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6'
+                    'rgba(59, 130, 246, 0.8)',   // Blue - 1st place
+                    'rgba(16, 185, 129, 0.8)',   // Green - 2nd place
+                    'rgba(245, 158, 11, 0.8)',   // Amber - 3rd place
+                    'rgba(139, 92, 246, 0.8)',   // Purple - 4th place
+                    'rgba(239, 68, 68, 0.8)',    // Red - 5th place
+                    'rgba(20, 184, 166, 0.8)',   // Teal - 6th place
+                    'rgba(249, 115, 22, 0.8)',   // Orange - 7th place
+                    'rgba(236, 72, 153, 0.8)',   // Pink - 8th place
+                    'rgba(132, 204, 22, 0.8)',   // Lime - 9th place
+                    'rgba(156, 163, 175, 0.8)'   // Gray - 10th place
                   ],
                   borderColor: [
-                    '#1d4ed8', '#dc2626', '#059669', '#d97706', '#7c3aed'
+                    '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444',
+                    '#14b8a6', '#f97316', '#ec4899', '#84cc16', '#9ca3af'
                   ],
-                  borderWidth: 1,
-                  borderRadius: 4,
+                  borderWidth: 2,
+                  borderRadius: 6,
                   borderSkipped: false,
+                  hoverBackgroundColor: [
+                    'rgba(59, 130, 246, 0.9)',   
+                    'rgba(16, 185, 129, 0.9)',   
+                    'rgba(245, 158, 11, 0.9)',   
+                    'rgba(139, 92, 246, 0.9)',   
+                    'rgba(239, 68, 68, 0.9)',    
+                    'rgba(20, 184, 166, 0.9)',   
+                    'rgba(249, 115, 22, 0.9)',   
+                    'rgba(236, 72, 153, 0.9)',   
+                    'rgba(132, 204, 22, 0.9)',   
+                    'rgba(156, 163, 175, 0.9)'   
+                  ],
+                  hoverBorderWidth: 3,
                 }]
               }}
               options={{
@@ -1141,46 +1631,47 @@ function App() {  const [salesData, setSalesData] = useState([]);
                     labels: {
                       color: 'rgba(255, 255, 255, 0.8)',
                       font: {
-                        size: 12,
-                        weight: '500'
+                        size: 14,
+                        weight: '600'
                       },
-                      padding: 20,
+                      padding: 25,
                     }
                   },
                   tooltip: {
-                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                    titleColor: '#ffffff',
-                    bodyColor: '#ffffff',
-                    borderColor: 'rgba(255, 255, 255, 0.1)',
-                    borderWidth: 1,
+                    enabled: true,
+                    mode: shouldShowYearComparison() ? 'index' : 'nearest',
+                    intersect: false,
                     callbacks: {
                       title: function(context) {
                         const pharmacist = shouldShowYearComparison() ? 
                           (metrics.yearComparison.pharmacistComparison || [])[context[0].dataIndex]?.name :
                           (metrics.topPharmacists || [])[context[0].dataIndex]?.name;
-                        return pharmacist || 'Unknown';
+                        
+                        if (shouldShowYearComparison() && !selectedMonths.includes('all')) {
+                          const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 
+                                             'July', 'August', 'September', 'October', 'November', 'December'];
+                          const monthContext = selectedMonths.length === 1 ? 
+                            monthNames[parseInt(selectedMonths[0])] : 
+                            `${selectedMonths.length} months`;
+                          return `${pharmacist || 'Unknown'} (${monthContext})`;
+                        }
+                        return `${pharmacist || 'Unknown'}`;
                       },
                       label: function(context) {
                         const value = formatCurrency(context.parsed.y);
                         if (shouldShowYearComparison()) {
-                          const year = context.dataset.label;
+                          const year = context.dataset.label.replace(' Revenue', '');
+                          if (!selectedMonths.includes('all')) {
+                            const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 
+                                               'July', 'August', 'September', 'October', 'November', 'December'];
+                            const monthContext = selectedMonths.length === 1 ? 
+                              monthNames[parseInt(selectedMonths[0])] : 
+                              `${selectedMonths.length} months`;
+                            return `${year} (${monthContext}): ${value}`;
+                          }
                           return `${year}: ${value}`;
                         }
                         return `Revenue: ${value}`;
-                      },
-                      afterBody: function(context) {
-                        if (shouldShowYearComparison() && context.length > 0) {
-                          const pharmacist = (metrics.yearComparison.pharmacistComparison || [])[context[0].dataIndex];
-                          if (pharmacist) {
-                            const growth = pharmacist.growth;
-                            const growthRate = pharmacist.growthRate;
-                            return [
-                              `Growth: ${growth >= 0 ? '+' : ''}${formatCurrency(growth)}`,
-                              `Rate: ${growthRate >= 0 ? '+' : ''}${growthRate.toFixed(1)}%`
-                            ];
-                          }
-                        }
-                        return [];
                       }
                     }
                   }
@@ -1195,11 +1686,14 @@ function App() {  const [salesData, setSalesData] = useState([]);
                     ticks: {
                       color: 'rgba(255, 255, 255, 0.7)',
                       font: {
-                        size: 11,
+                        size: 13,
+                        weight: '500'
                       },
                       callback: function(value) {
                         return formatCurrency(value);
-                      }
+                      },
+                      padding: 10,
+                      maxTicksLimit: 8
                     }
                   },
                   x: {
@@ -1210,105 +1704,129 @@ function App() {  const [salesData, setSalesData] = useState([]);
                       color: 'rgba(255, 255, 255, 0.8)',
                       font: {
                         size: 11,
-                        weight: '500'
+                        weight: '600'
                       },
                       maxRotation: 45,
-                      minRotation: 0
+                      minRotation: 45,
+                      padding: 10
                     }
                   }
-                },
-                interaction: {
-                  intersect: false,
-                  mode: 'index'
                 }
               }}
             />
-          </div>          {/* Payment Methods */}
-          <div className="chart-card">
-            <h3>Payment Methods {shouldShowYearComparison() ? '- Year Comparison' : ''}</h3>
+          </div>
+
+          {/* Payment Methods Chart */}
+          <div className="chart-card payment-methods-chart">
+            <h3>💳 Revenue by Payment Method {shouldShowYearComparison() ? '- Year Comparison' : ''}</h3>
             <Doughnut
               data={{
                 labels: shouldShowYearComparison() ? 
-                  ['Cash 2024', 'Credit 2024', 'Cash 2025', 'Credit 2025'] : 
-                  ['Cash', 'Credit'],
+                  ['Cash 2024', 'Insurance 2024', 'Cash 2025', 'Insurance 2025'] :
+                  ['Cash', 'Insurance'],
                 datasets: [{
                   data: shouldShowYearComparison() ? [
-                    metrics.yearComparison.year2024.paymentMethods.cash,
-                    metrics.yearComparison.year2024.paymentMethods.credit,
-                    metrics.yearComparison.year2025.paymentMethods.cash,
-                    metrics.yearComparison.year2025.paymentMethods.credit
-                  ] : [metrics.paymentMethods.cash, metrics.paymentMethods.credit],
-                  backgroundColor: shouldShowYearComparison() ? 
-                    ['#10b981', '#3b82f6', '#059669', '#1d4ed8'] : 
-                    ['#10b981', '#3b82f6'],
+                    metrics.yearComparison.year2024.paymentMethods?.cash || 0,
+                    metrics.yearComparison.year2024.paymentMethods?.credit || 0,
+                    metrics.yearComparison.year2025.paymentMethods?.cash || 0,
+                    metrics.yearComparison.year2025.paymentMethods?.credit || 0
+                  ] : [
+                    metrics.paymentMethods.cash || 0,
+                    metrics.paymentMethods.credit || 0
+                  ],
+                  backgroundColor: shouldShowYearComparison() ? [
+                    'rgba(34, 197, 94, 0.8)',   // Green for Cash 2024
+                    'rgba(59, 130, 246, 0.8)',  // Blue for Insurance 2024
+                    'rgba(34, 197, 94, 0.6)',   // Lighter Green for Cash 2025
+                    'rgba(59, 130, 246, 0.6)'   // Lighter Blue for Insurance 2025
+                  ] : [
+                    'rgba(34, 197, 94, 0.8)',   // Green for Cash
+                    'rgba(59, 130, 246, 0.8)'   // Blue for Insurance
+                  ],
+                  borderColor: shouldShowYearComparison() ? [
+                    '#22c55e',
+                    '#3b82f6',
+                    '#16a34a',
+                    '#2563eb'
+                  ] : [
+                    '#22c55e',
+                    '#3b82f6'
+                  ],
                   borderWidth: 3,
-                  borderColor: '#ffffff',
+                  hoverBackgroundColor: shouldShowYearComparison() ? [
+                    'rgba(34, 197, 94, 0.9)',
+                    'rgba(59, 130, 246, 0.9)',
+                    'rgba(34, 197, 94, 0.7)',
+                    'rgba(59, 130, 246, 0.7)'
+                  ] : [
+                    'rgba(34, 197, 94, 0.9)',
+                    'rgba(59, 130, 246, 0.9)'
+                  ],
                   hoverBorderWidth: 4,
-                  hoverBorderColor: '#ffffff',
-                  hoverBackgroundColor: shouldShowYearComparison() ? 
-                    ['#047857', '#1e40af', '#047857', '#1e3a8a'] : 
-                    ['#059669', '#2563eb'],
                 }]
               }}
               options={{
                 responsive: true,
                 maintainAspectRatio: false,
+                layout: {
+                  padding: {
+                    top: 20,
+                    bottom: shouldShowYearComparison() ? 60 : 20,
+                    left: 30,
+                    right: 20
+                  }
+                },
                 plugins: {
                   legend: {
                     display: true,
-                    position: 'bottom',
+                    position: shouldShowYearComparison() ? 'bottom' : 'left',
                     labels: {
-                      usePointStyle: true,
-                      padding: 20,
+                      color: '#ffffff',
                       font: {
-                        size: 13,
+                        size: shouldShowYearComparison() ? 12 : 14,
                         weight: '600'
                       },
-                      color: '#ffffff',
-                      generateLabels: function(chart) {
-                        const data = chart.data;
-                        const total = data.datasets[0].data.reduce((a, b) => a + b, 0);
-                        return data.labels.map((label, index) => {
-                          const value = data.datasets[0].data[index];
-                          const percentage = ((value / total) * 100).toFixed(1);
-                          return {
-                            text: `${label}: ${formatCurrency(value)} (${percentage}%)`,
-                            fillStyle: data.datasets[0].backgroundColor[index],
-                            strokeStyle: data.datasets[0].backgroundColor[index],
-                            pointStyle: 'circle',
-                            fontColor: '#ffffff'
-                          };
-                        });
-                      }
+                      padding: shouldShowYearComparison() ? 20 : 30,
+                      usePointStyle: true,
                     }
                   },
                   tooltip: {
-                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                    titleColor: '#ffffff',
-                    bodyColor: '#ffffff',
-                    borderColor: 'rgba(255, 255, 255, 0.2)',
-                    borderWidth: 1,
+                    enabled: true,
                     callbacks: {
+                      title: function(context) {
+                        if (shouldShowYearComparison() && !selectedMonths.includes('all')) {
+                          // Show month context for year comparison
+                          const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 
+                                             'July', 'August', 'September', 'October', 'November', 'December'];
+                          const monthContext = selectedMonths.length === 1 ? 
+                            monthNames[parseInt(selectedMonths[0])] : 
+                            `${selectedMonths.length} months`;
+                          return `Payment Methods - ${monthContext} Comparison`;
+                        }
+                        return shouldShowYearComparison() ? 'Payment Methods - Year Comparison' : 'Payment Methods';
+                      },
                       label: function(context) {
+                        const value = formatCurrency(context.parsed);
                         const total = context.dataset.data.reduce((a, b) => a + b, 0);
                         const percentage = ((context.parsed / total) * 100).toFixed(1);
-                        return `${context.label}: ${formatCurrency(context.parsed)} (${percentage}%)`;
+                        
+                        if (shouldShowYearComparison() && !selectedMonths.includes('all')) {
+                          const monthNames = ['', 'January', 'February', 'March', 'April', 'May', 'June', 
+                                             'July', 'August', 'September', 'October', 'November', 'December'];
+                          const monthContext = selectedMonths.length === 1 ? 
+                            monthNames[parseInt(selectedMonths[0])] : 
+                            `${selectedMonths.length} months`;
+                          return `${context.label} (${monthContext}): ${value} (${percentage}%)`;
+                        }
+                        return `${context.label}: ${value} (${percentage}%)`;
                       }
                     }
                   }
                 },
-                cutout: '65%',
-                layout: {
-                  padding: {
-                    top: 10,
-                    bottom: 20,
-                    left: 10,
-                    right: 10
+                elements: {
+                  arc: {
+                    borderWidth: 3
                   }
-                },
-                animation: {
-                  animateRotate: true,
-                  duration: 1000
                 }
               }}
             />
@@ -1317,73 +1835,118 @@ function App() {  const [salesData, setSalesData] = useState([]);
 
         {/* Data Tables */}
         <div className="tables-grid">
-          {/* Top Locations */}
-          <div className="table-card">
-            <h3>Revenue by Location</h3>
-            <div className="table-container">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Location</th>
-                    <th>Revenue</th>
-                    <th>Percentage</th>
-                  </tr>
-                </thead>
-                <tbody>                  {metrics.revenueByLocation.map((location, index) => (
-                    <tr key={index}>
-                      <td>{location.location}</td>
-                      <td>{formatCurrency(location.revenue)}</td>
-                      <td>{((location.revenue / metrics.totalRevenue) * 100).toFixed(1)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {/* Top Pharmacists Performance Table */}
+          <div className="table-card pharmacist-performance-card">
+            <div className="table-header-section">
+              <h3>🏆 Top 10 Performing Pharmacists {shouldShowYearComparison() ? '- Year Comparison' : ''}</h3>
+              <div className="table-subtitle">
+                Performance ranking based on net revenue after returns
+              </div>
             </div>
-          </div>          {/* Top Pharmacists Table */}
-          <div className="table-card">
-            <h3>Top Pharmacists Performance {shouldShowYearComparison() ? '- Year Comparison' : ''}</h3>
-            <div className="table-container">
-              <table>
+            <div className="table-container pharmacist-table-container">
+              <table className="pharmacist-performance-table">
                 <thead>
                   <tr>
-                    <th>Rank</th>
-                    <th>Pharmacist</th>
+                    <th className="rank-header">Rank</th>
+                    <th className="name-header">Pharmacist Name</th>
                     {shouldShowYearComparison() ? (
                       <>
-                        <th>2024 Revenue</th>
-                        <th>2025 Revenue</th>
-                        <th>Growth</th>
-                        <th>Growth %</th>
+                        <th className="revenue-header">2024 Revenue</th>
+                        <th className="revenue-header">2025 Revenue</th>
+                        <th className="growth-header">Growth Amount</th>
+                        <th className="percentage-header">Growth %</th>
                       </>
                     ) : (
                       <>
-                        <th>Revenue</th>
-                        <th>Percentage</th>
+                        <th className="revenue-header">Total Revenue</th>
+                        <th className="percentage-header">Revenue Cont %</th>
                       </>
                     )}
                   </tr>
                 </thead>
-                <tbody>                  {shouldShowYearComparison() ? (
-                    (metrics.yearComparison.pharmacistComparison || []).slice(0, 8).map((pharmacist, index) => (
-                      <tr key={index}>
-                        <td>#{index + 1}</td>
-                        <td>{pharmacist.name}</td>
-                        <td>{formatCurrency(pharmacist.revenue2024)}</td>
-                        <td>{formatCurrency(pharmacist.revenue2025)}</td>
-                        <td style={{color: pharmacist.growth >= 0 ? '#10b981' : '#ef4444'}}>
-                          {pharmacist.growth >= 0 ? '+' : ''}{formatCurrency(pharmacist.growth)}
+                <tbody>
+                  {shouldShowYearComparison() ? (
+                    (metrics.yearComparison.pharmacistComparison || []).slice(0, 10).map((pharmacist, index) => (
+                      <tr key={index} className={`pharmacist-row ${index < 3 ? `top-performer-${index + 1}` : ''}`}>
+                        <td className="rank-cell">
+                          <div className="rank-badge">
+                            <span className="rank-number">
+                              {index === 0 ? '🥇' : 
+                               index === 1 ? '🥈' : 
+                               index === 2 ? '🥉' : 
+                               index === 3 ? '🏅' : 
+                               index === 4 ? '🎖️' : 
+                               index + 1}
+                            </span>
+                          </div>
                         </td>
-                        <td style={{color: pharmacist.growthRate >= 0 ? '#10b981' : '#ef4444'}}>
-                          {pharmacist.growthRate >= 0 ? '+' : ''}{pharmacist.growthRate.toFixed(1)}%
+                        <td className="name-cell">
+                          <div className="pharmacist-info">
+                            <span className="pharmacist-name">
+                              {pharmacist.name || 'Unknown'}
+                            </span>
+                            <span className="pharmacist-status">
+                              {index < 3 ? '🌟 Top Performer' : 'Active'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="revenue-cell">
+                          <span className="revenue-amount">{formatCurrency(pharmacist.revenue2024)}</span>
+                        </td>
+                        <td className="revenue-cell">
+                          <span className="revenue-amount">{formatCurrency(pharmacist.revenue2025)}</span>
+                        </td>
+                        <td className="growth-cell">
+                          <div className="growth-info">
+                            <span className={`growth-amount ${pharmacist.growth >= 0 ? 'growth-positive' : 'growth-negative'}`}>
+                              {pharmacist.growth >= 0 ? '+' : ''}{formatCurrency(pharmacist.growth)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="percentage-cell">
+                          <div className="percentage-badge">
+                            <span className={`percentage-value ${pharmacist.growthRate >= 0 ? 'growth-positive' : 'growth-negative'}`}>
+                              {pharmacist.growthRate >= 0 ? '+' : ''}{pharmacist.growthRate.toFixed(1)}%
+                            </span>
+                          </div>
                         </td>
                       </tr>
-                    ))                  ) : (
-                    (metrics.topPharmacists || []).slice(0, 8).map((pharmacist, index) => (
-                      <tr key={index}>
-                        <td>#{index + 1}</td>
-                        <td>{pharmacist.name}</td>
-                        <td>{formatCurrency(pharmacist.revenue)}</td>
-                        <td>{((pharmacist.revenue / metrics.totalRevenue) * 100).toFixed(1)}%</td>
+                    ))
+                  ) : (
+                    (metrics.topPharmacists || []).slice(0, 10).map((pharmacist, index) => (
+                      <tr key={index} className={`pharmacist-row ${index < 3 ? `top-performer-${index + 1}` : ''}`}>
+                        <td className="rank-cell">
+                          <div className="rank-badge">
+                            <span className="rank-number">
+                              {index === 0 ? '🥇' : 
+                               index === 1 ? '🥈' : 
+                               index === 2 ? '🥉' : 
+                               index === 3 ? '🏅' : 
+                               index === 4 ? '🎖️' : 
+                               index + 1}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="name-cell">
+                          <div className="pharmacist-info">
+                            <span className="pharmacist-name">
+                              {pharmacist.name || 'Unknown'}
+                            </span>
+                            <span className="pharmacist-status">
+                              {index < 3 ? '🌟 Top Performer' : 'Active'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="revenue-cell">
+                          <span className="revenue-amount">{formatCurrency(pharmacist.revenue || 0)}</span>
+                        </td>
+                        <td className="percentage-cell">
+                          <div className="percentage-badge">
+                            <span className="percentage-value">
+                              {((pharmacist.revenue / metrics.totalRevenue) * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                        </td>
                       </tr>
                     ))
                   )}
