@@ -286,9 +286,29 @@ body {
     min-width: 0;
     overflow-x: auto;
   }
+  /* Dark dropdown for filter menus on small screens */
+  .MultiSelect__menu, .multi-select__menu, .multi-select__dropdown, .react-select__menu {
+    background: #23272f !important;
+    color: #fff !important;
+    border: 1px solid #444 !important;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.7) !important;
+    z-index: 1002 !important;
+  }
+  .MultiSelect__option, .multi-select__option, .react-select__option {
+    background: transparent !important;
+    color: #fff !important;
+  }
+  .MultiSelect__option--is-focused, .multi-select__option--is-focused, .react-select__option--is-focused {
+    background: #374151 !important;
+    color: #fff !important;
+  }
+  .MultiSelect__option--is-selected, .multi-select__option--is-selected, .react-select__option--is-selected {
+    background: #4f46e5 !important;
+    color: #fff !important;
+  }
 }
 
-/* --- Force charts to slide below each other with fixed min-width on small screens --- */
+/* --- Force charts and tables to slide below each other with fixed min-width on small screens --- */
 @media (max-width: 700px) {
   .charts-grid {
     display: flex !important;
@@ -304,12 +324,22 @@ body {
   .chart-card,
   .chart-card.half-width,
   .chart-card.pharmacist-chart,
-  .chart-card.payment-methods-chart {
-    min-width: 400px;
-    width: 95vw;
+  .chart-card.payment-methods-chart,
+  .table-card {
+    min-width: 400px !important;
+    width: 95vw !important;
+    max-width: 600px !important;
+    margin: 0 auto !important;
+  }
+  .table-container {
+    min-width: 400px !important;
+    width: 100%;
     max-width: 600px;
-    margin: 0 auto;
-    box-sizing: border-box;
+  }
+  .pharmacist-performance-table {
+    min-width: 400px !important;
+    width: 100%;
+    max-width: 600px;
   }
 }
 
