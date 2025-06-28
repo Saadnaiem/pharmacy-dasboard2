@@ -2740,3 +2740,22 @@ body {
 .table-card:hover::before {
   opacity: 1;
 }
+
+@media (max-width: 900px) {
+  .metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px;
+  }
+  .charts-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .tables-grid {
+    max-width: 600px;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
