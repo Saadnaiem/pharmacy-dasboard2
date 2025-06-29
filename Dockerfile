@@ -4,7 +4,7 @@ FROM node:20.18.0-alpine3.20 AS frontend-build
 
 WORKDIR /app/client
 COPY client/package*.json ./
-RUN npm ci --only=production --silent
+RUN npm ci --silent
 
 COPY client/ ./
 RUN npm run build
