@@ -14,6 +14,7 @@ import {
   PointElement,
   ArcElement,
 } from 'chart.js';
+import ReportsPage from './ReportsPage';
 
 ChartJS.register(
   CategoryScale,
@@ -104,6 +105,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
   const [selectedYears, setSelectedYears] = useState(['all']);
   const [selectedMonths, setSelectedMonths] = useState(['all']);
   const [selectedLocations, setSelectedLocations] = useState(['all']);
+  const [page, setPage] = useState('dashboard');
 
   // Remove data source button and set up environment-based data loading
   const isProduction = process.env.NODE_ENV === 'production';
@@ -910,6 +912,12 @@ function App() {  const [salesData, setSalesData] = useState([]);
   return (
     <div className="App">
       <div className="container">
+        <nav className="main-nav">
+          <button className={page === 'dashboard' ? 'active' : ''} onClick={() => setPage('dashboard')}>Dashboard</button>
+          <button className={page === 'reports' ? 'active' : ''} onClick={() => setPage('reports')}>Reports</button>
+        </nav>
+        {page === 'dashboard' ? (
+          <>        
         <h1 className="main-title">
           💊 Pharmacy Analytics Dashboard
         </h1>
@@ -1768,7 +1776,7 @@ function App() {  const [salesData, setSalesData] = useState([]);
                   ] : [
                     'rgba(34, 197, 94, 0.9)',
                     'rgba(59, 130, 246, 0.9)'
-                  ],
+                                   ],
                   hoverBorderWidth: 4,
                 }]
               }}
@@ -1967,6 +1975,10 @@ function App() {  const [salesData, setSalesData] = useState([]);
         <footer className="footer">
           <p>Created By Dr.Saad Naiem Ali</p>
         </footer>
+          </>
+        ) : (
+          <ReportsPage />
+        )}
       </div>
     </div>
   );

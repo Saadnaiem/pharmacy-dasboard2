@@ -9,8 +9,17 @@ from dotenv import load_dotenv
 # Load environment variables from .env file (for local development)
 load_dotenv()
 
-app = Flask(__name__, static_folder='static', static_url_path='')
+app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
+
+# Set static folder to React build output for production
+REACT_BUILD_DIR = os.path.join(os.path.dirname(__file__), 'client', 'build')
+if os.path.exists(REACT_BUILD_DIR):
+    app.static_folder = REACT_BUILD_DIR
+    app.static_url_path = ''
+else:
+    app.static_folder = 'static'
+    app.static_url_path = ''
 
 # Configuration for Google Drive CSV
 # You must set this as an environment variable in production
